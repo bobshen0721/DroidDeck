@@ -2,6 +2,7 @@
 import os
 import re
 import shutil
+import sys
 
 HOME = os.environ.get("HOME", "/root")
 SYSTEM_DIR = "/usr/share/applications"
@@ -12,6 +13,13 @@ MARK = "X-DroidDeck-GPU=1"
 SKIP = re.compile(r"^(steam|droiddeck-game-|droiddeck-steam|steamdeck-)", re.I)
 CHROMIUM_ENV = "env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 ELECTRON_DISABLE_SANDBOX=1 "
 CHROMIUM_FLAGS = " --no-sandbox --ozone-platform=x11"
+# Some Electron packages omit chrome-sandbox; these files are more reliable signs
+# of Chromium than a package name or a generic shared library.
+CHROMIUM_MARKERS = ("chrome-sandbox", "chrome_100_percent.pak", "v8_context_snapshot.bin")
+# The ChatGPT ARM64 .deb currently exposes a 'chatgpt' desktop entry that may
+# not have any of the markers next to its executable. Limit this exception to
+# the exact desktop name and executable so other programs are not affected.
+KNOWN_CHROMIUM_DESKTOPS = {("ChatGPT", "chatgpt")}
 
 
 def enabled():
@@ -37,16 +45,19 @@ def split_program(exec_line):
     return program, (" " + rest) if rest else ""
 
 
-def chromium(exec_line):
+def chromium(exec_line, name=""):
     program, _ = split_program(exec_line)
     if not program:
         return False
     program = program.strip('"')
     path = program if os.path.isabs(program) else shutil.which(program)
-    if not path:
+    if not path or not os.path.isfile(path):
         return False
     here = os.path.dirname(os.path.realpath(path))
-    return any(os.path.exists(os.path.join(d, "chrome-sandbox")) for d in (here, os.path.dirname(here)))
+    if any(os.path.isfile(os.path.join(d, marker))
+           for d in (here, os.path.dirname(here)) for marker in CHROMIUM_MARKERS):
+        return True
+    return (name, os.path.basename(program)) in KNOWN_CHROMIUM_DESKTOPS
 
 
 def chromium_exec(exec_line):
@@ -76,14 +87,15 @@ def wrap(text, gpu_on=True):
         return None
     cats = set(filter(None, keys.get("Categories", "").split(";")))
     gpu = gpu_on and bool(cats & {"Game", "Emulator"})
-    browser = chromium(exec_line)
+    browser = chromium(exec_line, keys.get("Name", ""))
     if not gpu and not browser:
         return None
     if browser:
         exec_line = chromium_exec(exec_line)
     if not gpu:
         def fix(lines):
-            return ["Exec=" + chromium_exec(l[5:].strip()) if l.startswith("Exec=") and chromium(l[5:].strip()) else l
+            return ["Exec=" + chromium_exec(l[5:].strip())
+                    if l.startswith("Exec=") and chromium(l[5:].strip(), keys.get("Name", "")) else l
                     for l in lines]
         out_group = fix(group)
         while out_group and not out_group[-1].strip():
@@ -112,7 +124,8 @@ def wrap(text, gpu_on=True):
     for l in rest:
         if l.startswith("Exec=") and not l[5:].startswith("droiddeck-gpu "):
             action = l[5:].strip()
-            l = "Exec=" + gpu_exec(chromium_exec(action) if chromium(action) else action)
+            l = "Exec=" + gpu_exec(chromium_exec(action)
+                                   if chromium(action, keys.get("Name", "")) else action)
         wrapped_rest.append(l)
     if wrapped_rest and wrapped_rest[0].strip():
         wrapped_rest.insert(0, "")
@@ -159,4 +172,60 @@ def main():
     print(f"droiddeck-desktop-gpu: {'on' if on else 'off'}, {len(written)} entries on the GPU, {removed} removed")
 
 
-main()
+def diagnose(app_name):
+    """Read-only report for debugging desktop entry compatibility and sandboxing."""
+    print(f"DroidDeck desktop compatibility: {app_name}")
+    print(f"uid={os.getuid()}, machine={os.uname().machine}")
+    try:
+        with open("/proc/self/status", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith(("NoNewPrivs:", "Seccomp:", "CapEff:")):
+                    print(line.rstrip())
+    except OSError as error:
+        print(f"proc status unavailable: {error}")
+
+    matches = []
+    for source in (USER_DIR, LOCAL_DIR, SYSTEM_DIR, FLATPAK_DIR):
+        if not os.path.isdir(source):
+            continue
+        for filename in sorted(os.listdir(source)):
+            if not filename.endswith(".desktop"):
+                continue
+            path = os.path.join(source, filename)
+            try:
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    data = f.read()
+            except OSError:
+                continue
+            _, group, _ = main_group(data)
+            if group is None:
+                continue
+            values = dict(line.split("=", 1) for line in group if "=" in line and not line.startswith("#"))
+            if filename.removesuffix(".desktop") != app_name and values.get("Name", "").casefold() != app_name.casefold():
+                continue
+            matches.append((path, values, data))
+
+    if not matches:
+        print("No matching .desktop entry. Check the application ID or installed package.")
+        return 1
+    for path, values, data in matches:
+        command = values.get("Exec", "")
+        print(f"entry={path}")
+        print(f"exec={command}")
+        print(f"recognized_chromium={chromium(command, values.get('Name', ''))}")
+        print(f"droiddeck_generated={MARK in data}")
+        print(f"chromium_sandbox_disabled={'--no-sandbox' in command}")
+        if '--no-sandbox' in command:
+            print("WARNING: Chromium's application sandbox is disabled; Android app isolation remains, but is not equivalent.")
+        elif chromium(command, values.get("Name", "")) and path.startswith(USER_DIR + os.sep):
+            print("Note: the user entry lacks the compatibility arguments; check whether it is user-customized.")
+    return 0
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--diagnose":
+        sys.exit(diagnose(sys.argv[2]))
+    if len(sys.argv) != 1:
+        print("usage: python3 droiddeck-desktop-gpu [--diagnose APP_ID]", file=sys.stderr)
+        sys.exit(2)
+    main()

@@ -10,9 +10,8 @@ FLAGS = " --no-sandbox --ozone-platform=x11"
 
 def load():
     source = SCRIPT.read_text()
-    assert source.rstrip().endswith("main()")
     scope = {"__name__": "droiddeck_desktop_gpu"}
-    exec(compile(source.rstrip()[:-len("main()")], str(SCRIPT), "exec"), scope)
+    exec(compile(source.split('if __name__ == "__main__":', 1)[0], str(SCRIPT), "exec"), scope)
     return scope
 
 
@@ -78,6 +77,57 @@ class DesktopChromiumAppsTest(unittest.TestCase):
         out = self.gpu["wrap"](self.entry(str(self.electron), categories="Game;"), False)
         self.assertEqual(self.exec_lines(out), [PREFIX + str(self.electron) + FLAGS])
         self.assertIsNone(self.gpu["wrap"](self.entry(str(self.plain), categories="Game;"), False))
+
+    def test_chatgpt_arm64_deb_without_chrome_sandbox_is_recognized(self):
+        chatgpt = self.app("opt/chatgpt/chatgpt", sandbox=False)
+        (self.root / "bin/chatgpt").symlink_to(chatgpt)
+        text = self.entry("chatgpt %U", actions="chatgpt --new-window").replace("Name=App", "Name=ChatGPT")
+        out = self.gpu["wrap"](text)
+        self.assertEqual(self.exec_lines(out), [PREFIX + "chatgpt" + FLAGS + " %U",
+                                                PREFIX + "chatgpt" + FLAGS + " --new-window"])
+
+    def test_chatgpt_exception_does_not_match_unrelated_name_or_missing_executable(self):
+        chatgpt = self.app("opt/chatgpt/chatgpt", sandbox=False)
+        (self.root / "bin/chatgpt").symlink_to(chatgpt)
+        self.assertIsNone(self.gpu["wrap"](self.entry("chatgpt %U")))
+        self.assertIsNone(self.gpu["wrap"](self.entry("chatgpt-fake %U").replace("Name=App", "Name=ChatGPT")))
+
+    def test_chromium_signature_without_chrome_sandbox(self):
+        app = self.app("lib/browser/browser", sandbox=False)
+        (app.parent / "v8_context_snapshot.bin").write_text("marker")
+        out = self.gpu["wrap"](self.entry(f"{app} %U"))
+        self.assertEqual(self.exec_lines(out), [PREFIX + str(app) + FLAGS + " %U"])
+
+    def test_signature_falls_back_to_chrome_pak(self):
+        app = self.app("lib/browser/browser", sandbox=False)
+        (app.parent / "chrome_100_percent.pak").write_text("marker")
+        self.assertTrue(self.gpu["chromium"](str(app)))
+
+    def test_non_chromium_binary_stays_unchanged(self):
+        app = self.app("lib/plain2/editor2", sandbox=False)
+        (app.parent / "notes.txt").write_text("not Chromium")
+        self.assertIsNone(self.gpu["wrap"](self.entry(str(app))))
+
+    def test_diagnose_reports_sandbox_flags_without_modifying_files(self):
+        import contextlib
+        import io
+        app = self.app("opt/chatgpt/chatgpt", sandbox=False)
+        (self.root / "bin/chatgpt").symlink_to(app)
+        launchers = self.root / "share/applications"
+        launchers.mkdir(parents=True)
+        desktop = launchers / "chatgpt.desktop"
+        desktop.write_text(self.entry("chatgpt %U").replace("Name=App", "Name=ChatGPT"))
+        self.gpu["SYSTEM_DIR"] = str(launchers)
+        self.gpu["LOCAL_DIR"] = str(self.root / "other")
+        self.gpu["USER_DIR"] = str(self.root / "user")
+        self.gpu["FLATPAK_DIR"] = str(self.root / "flatpak")
+        before = desktop.read_text()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(self.gpu["diagnose"]("chatgpt"), 0)
+        self.assertIn("recognized_chromium=True", out.getvalue())
+        self.assertIn("chromium_sandbox_disabled=False", out.getvalue())
+        self.assertEqual(desktop.read_text(), before)
 
     def test_games_that_are_not_chromium_are_unchanged(self):
         out = self.gpu["wrap"](self.entry(str(self.plain), categories="Game;"))
