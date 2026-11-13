@@ -110,7 +110,7 @@ internal fun Pane(
     onOpenDeveloperOptions: () -> Unit, onRequestWirelessAdb: (Boolean) -> Unit, onPairWirelessDebugging: () -> Unit,
 ) {
     BoxWithConstraints(modifier = modifier) {
-      CompositionLocalProvider(LocalNarrowPane provides (maxWidth < NarrowPaneWidth)) {
+      CompositionLocalProvider(LocalNarrowPane provides (maxWidth < NarrowPaneWidth || LocalPhoneNavigation.current)) {
         val backdropArt: File? = when {
             s.pageKey != null && page != null -> null
             selected.startsWith("app:") -> s.steamGames.firstOrNull { "app:${it.appId}" == selected }?.art

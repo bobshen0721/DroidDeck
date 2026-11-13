@@ -69,6 +69,17 @@ internal object NavTabs {
         return if (more(s).isEmpty()) shown else shown + MORE
     }
 
+    fun mobileBar(s: FrontEndState): List<String> = mobilePlan(s).bar
+
+    fun mobileMore(s: FrontEndState): List<String> = mobilePlan(s).more
+
+    private fun mobilePlan(s: FrontEndState) = MobileNavigation.plan(
+        bar = bar(s),
+        shelved = more(s),
+        order = listed(s),
+        activeSession = s.running != null,
+    )
+
     fun move(context: Context, s: FrontEndState, key: String, step: Int) {
         val visible = listed(s)
         val at = visible.indexOf(key)

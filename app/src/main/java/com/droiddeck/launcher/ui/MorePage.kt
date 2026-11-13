@@ -38,7 +38,8 @@ import com.droiddeck.launcher.R
 
 @Composable
 internal fun MorePage(s: FrontEndState, a: FrontEndActions, onSelect: (String) -> Unit, modifier: Modifier) {
-    val keys = NavTabs.more(s)
+    val phoneNavigation = LocalPhoneNavigation.current
+    val keys = if (phoneNavigation) NavTabs.mobileMore(s) else NavTabs.more(s)
     val open: (String) -> Unit = { key -> if (key == "components") a.onComponents(true) else onSelect(key) }
     Column(modifier.verticalScroll(rememberScrollState())) {
         PageHeader(stringResource(R.string.rail_more)) {
@@ -47,6 +48,11 @@ internal fun MorePage(s: FrontEndState, a: FrontEndActions, onSelect: (String) -
                 SetupTabs.openLauncher = true
                 SetupTabs.focusTabs = true
                 onSelect("setup")
+            }
+        }
+        if (phoneNavigation && s.running != null) {
+            Box(Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
+                PrimaryButton(stringResource(R.string.rail_resume_named, s.running), main = true) { a.onResume() }
             }
         }
         BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -74,7 +80,8 @@ private fun MoreTile(s: FrontEndState, key: String, first: Boolean, modifier: Mo
     val src = remember { MutableInteractionSource() }
     val hot = rememberHot(src)
     val shape = RoundedCornerShape(18.dp)
-    val count = railCount(s, key)
+    val mobile = LocalPhoneNavigation.current
+    val count = railCount(s, key, mobile)
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
@@ -92,7 +99,7 @@ private fun MoreTile(s: FrontEndState, key: String, first: Boolean, modifier: Mo
             Text(stringResource(label), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = colors.onBackground,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 8.dp))
         }
-        if (railBadge(s, key)) Box(Modifier.align(Alignment.TopEnd).padding(12.dp).size(9.dp).clip(CircleShape).background(AttentionAmber))
+        if (railBadge(s, key, mobile = mobile)) Box(Modifier.align(Alignment.TopEnd).padding(12.dp).size(9.dp).clip(CircleShape).background(AttentionAmber))
         if (count > 0) Box(Modifier.align(Alignment.TopEnd).padding(10.dp)) { CountPill(count) }
     }
 }
