@@ -3730,4 +3730,14 @@
     <string name="soundtracks_repeat_one">單曲重複</string>
     <string name="soundtracks_volume">音量</string>
     <string name="soundtracks_no_tracks">此原聲帶中沒有音訊檔案</string>
+    <string name="mobile_desktop_title">手機桌面快捷操作</string>
+    <string name="mobile_desktop_scale">桌面介面大小</string>
+    <string name="mobile_desktop_scale_hint">調整 Linux 桌面解析度，讓視窗與文字變大；已開啟的視窗可能重新排列。</string>
+    <string name="mobile_desktop_scale_factor">%1$d%%</string>
+    <string name="mobile_touch_mode_hint">快速切換觸控板、直接觸控或自訂手勢。</string>
+    <string name="mobile_gesture_hint">雙指捲動或縮放；桌面觸控板模式下三指輕點可叫出 Android 鍵盤。</string>
+    <string name="mobile_external_display">第二螢幕面板</string>
+    <string name="mobile_external_display_hint">選擇外接螢幕顯示控制板或桌面面板；這不會搬移整個 KDE 工作階段。</string>
+    <string name="mobile_external_target">選擇外接螢幕</string>
+    <string name="mobile_desktop_note">手機桌面會顯示浮動鍵盤按鈕。雙指縮放只影響支援的應用程式；介面大小則調整整個 Linux 桌面解析度。其他鍵盤、顯示與手勢設定仍可在下方調整。</string>
 </resources>

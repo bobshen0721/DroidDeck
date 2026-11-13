@@ -265,6 +265,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback, com.droidde
     private var touchRoute: com.droiddeck.launcher.input.TouchRouter.Route? = null
     private var keyboard: KeyboardHost? = null
     private var desktopKeyboardButton: com.droiddeck.launcher.input.DesktopKeyboardButton? = null
+    private var desktopQuickScale by mutableStateOf(1f)
     private var lastUserPressMs = 0L
     private var pressDownX = 0f
     private var pressDownY = 0f
@@ -741,6 +742,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback, com.droidde
             SessionState.followScreen = followChoice()
             SessionState.followScale = followScale()
         }
+        desktopQuickScale = followScale()
         applyFollowOrientation(resources.configuration)
         goFullscreen()
         volumeControlStream = android.media.AudioManager.STREAM_MUSIC
@@ -999,7 +1001,10 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback, com.droidde
             androidx.compose.runtime.LaunchedEffect(AgentGuest.desktopTextField) { onDesktopTextField(AgentGuest.desktopTextField) }
             androidx.compose.runtime.LaunchedEffect(AgentGuest.gameTextField, AgentGuest.gameProgram) { onGameTextField(AgentGuest.gameTextField) }
             androidx.compose.runtime.LaunchedEffect(wowChat.request) { placeWowChat() }
-            androidx.compose.runtime.LaunchedEffect(pipUi, pcKeyboardOpen) { updateDesktopKeyboardButton() }
+            androidx.compose.runtime.LaunchedEffect(
+                pipUi, pcKeyboardOpen, drawerOpen, achievementsOpen, inputSettingsOpen, gestureSettingsOpen,
+                resumed, SessionState.running, loading.visible,
+            ) { updateDesktopKeyboardButton() }
             val keyboardRequestsSeen = androidx.compose.runtime.remember { intArrayOf(AgentGuest.keyboardRequests) }
             androidx.compose.runtime.LaunchedEffect(AgentGuest.keyboardRequests) {
                 if (AgentGuest.keyboardRequests != keyboardRequestsSeen[0]) {
@@ -1326,6 +1331,8 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback, com.droidde
             onGameOnBottom = { on -> drawerOpen = false; putGameOnBottom(on) },
             dashboardAvailable = bottomPages().isNotEmpty(),
             desktopAvailable = com.droiddeck.launcher.session.BottomDesktop.available(),
+            desktopScale = desktopQuickScale,
+            onDesktopScale = ::setDesktopUiScale,
             secondScreenDisplays = secondScreenDisplays,
             selectedSecondScreenDisplay = selectedSecondScreenDisplay,
             onHud = { on -> SessionPrefs.setHudEnabled(this@SessionActivity, on); hudOn = on; hud.refresh() },
@@ -2406,6 +2413,18 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback, com.droidde
         WaylandCompositor.nativeResizeOutput(size.first, size.second)
     }
 
+    private fun setDesktopUiScale(scale: Float) {
+        if (SessionState.mode != SessionService.MODE_DESKTOP || !SessionState.running || !CompositorHost.isStarted || pipUi) return
+        val value = DesktopQuickControls.normalizeScale(scale)
+        if (desktopQuickScale == value && SessionState.followScreen && SessionState.followScale == value) return
+        val choice = DesktopQuickControls.resolutionChoice(value)
+        SessionPrefs.setResolutionChoice(this, displayMode(), choice)
+        desktopQuickScale = value
+        SessionState.followScreen = true
+        SessionState.followScale = value
+        if (::surfaceView.isInitialized) resizeOutputForWindow(surfaceView.width, surfaceView.height)
+    }
+
     private fun followScale(): Float {
         val mode = displayMode()
         val choice = SessionPrefs.resolutionChoice(this, mode, com.droiddeck.launcher.session.SessionDisplay.panelSize(this))
@@ -3367,7 +3386,12 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback, com.droidde
         override fun onScroll(dx: Float, dy: Float) = fingerScroll(dx, dy)
         override fun onScrollEnd() = fingerScrollEnd()
         override fun onThreeFingerTap(): Boolean {
-            uiHandler.post { togglePcKeyboard() }
+            uiHandler.post {
+                if (SessionState.mode == SessionService.MODE_DESKTOP) {
+                    pcKeyboardOpen = false
+                    keyboard?.show()
+                } else togglePcKeyboard()
+            }
             return true
         }
         override fun onZoom(steps: Int) {
@@ -4750,8 +4774,15 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback, com.droidde
 
     private fun updateDesktopKeyboardButton() {
         val button = desktopKeyboardButton ?: return
-        val show = desktopTextInput() && AgentGuest.desktopTextField && !pcKeyboardOpen &&
-            !(keyboard?.let { it.shown && (Build.VERSION.SDK_INT < 30 || it.imeShowing) } ?: false)
+        val show = DesktopQuickControls.showKeyboardButton(
+            isDesktop = desktopTextInput(),
+            isPhone = resources.configuration.smallestScreenWidthDp < 600,
+            sessionReady = resumed && ::loading.isInitialized && !loading.visible && !SessionState.suspended,
+            overlayOpen = drawerOpen || achievementsOpen || inputSettingsOpen || gestureSettingsOpen || pcKeyboardOpen,
+            androidKeyboardVisible = keyboard?.let {
+                it.shown && (Build.VERSION.SDK_INT < 30 || it.imeShowing)
+            } ?: false,
+        )
         val visibility = if (show) View.VISIBLE else View.GONE
         if (button.visibility == visibility) return
         if (show) button.applyColors()
@@ -5000,6 +5031,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback, com.droidde
         onScreenControls?.reload()
         controllerSettings = ControllerPrefs.read(this)
         resumed = true
+        desktopQuickScale = followScale()
         updateDesktopKeyboardButton()
         com.droiddeck.launcher.input.HomeButtonShortcuts.attach(this,
             enabled = {
