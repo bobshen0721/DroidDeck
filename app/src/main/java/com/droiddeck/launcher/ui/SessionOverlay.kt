@@ -621,7 +621,8 @@ internal fun SessionDrawer(open: Boolean, requestedPage: SessionDrawerPage, cont
                             if (!a.glassesOutput) CardboardGroup(host, a) { key -> focus.track(page, key) }
                         }
                         SessionDrawerPage.CONTROLLER -> {
-                            if (a.desktop) DesktopPhoneQuickActions(host, a) { key -> focus.track(page, key) }
+                            if (a.desktop && androidx.compose.ui.platform.LocalConfiguration.current.smallestScreenWidthDp < 600)
+                                DesktopPhoneQuickActions(host, a) { key -> focus.track(page, key) }
                             SettingsGroup(stringResource(R.string.drawer_page_controller)) {
                                 InputQuickSettings(host, desktop = a.desktop, onChanged = a.onInputSelection, onEdit = a.onInputSettings) { key -> focus.track(page, key) }
                             }
