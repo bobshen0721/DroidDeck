@@ -264,6 +264,19 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback, com.droidde
     private var routedTouchMode = SessionPrefs.TOUCH_AUTO
     private var touchRoute: com.droiddeck.launcher.input.TouchRouter.Route? = null
     private var keyboard: KeyboardHost? = null
+    private var desktopText: com.droiddeck.launcher.input.DesktopTextInput? = null
+    private val desktopControls by lazy {
+        com.droiddeck.launcher.ui.DesktopControlsState(
+            com.droiddeck.launcher.input.DesktopInputPrefs.read(this),
+            com.droiddeck.launcher.input.DesktopInputPrefs.toolbarExpanded(this),
+            com.droiddeck.launcher.input.DesktopInputPrefs.toolbarPosition(this),
+            com.droiddeck.launcher.input.DesktopInputPrefs.scale(this),
+        )
+    }
+    private var keyboardAutoShown = false
+    private var rightClickTouch = false
+    private var desktopScaleWanted = 0
+    private val desktopScaleRun = Runnable { applyDesktopScale() }
     private var desktopKeyboardButton: com.droiddeck.launcher.input.DesktopKeyboardButton? = null
     private var lastUserPressMs = 0L
     private var pressDownX = 0f
@@ -805,8 +818,27 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback, com.droidde
             }
             root.addView(controls)
         }
+        val desktopTyping = com.droiddeck.launcher.input.DesktopTextInput(
+            this,
+            fifo = { File(AgentGuest.dir(this), "ime-input") },
+            fieldFocused = { AgentGuest.desktopTextField },
+            dispatchKey = { dispatchKeyEvent(it) },
+            typeText = { keyboard?.type(it) },
+            guestKey = { code, down -> sendGuestKey(code, down) },
+            share = { sessionClipboard.share(it) },
+            onPreview = { desktopControls.preview = it },
+        ).also { typing ->
+            typing.settings = desktopControls.settings
+            typing.onOneShotChanged = { desktopControls.oneShot = it }
+        }
+        desktopText = desktopTyping
         keyboard = KeyboardHost(this).also { host ->
-            host.onImeChanged = { updateDesktopKeyboardButton() }
+            host.typistFor = { desktopTyping.takeIf { desktopTextInput() } }
+            host.onImeChanged = { visible ->
+                desktopControls.keyboardShown = visible
+                updateDesktopKeyboardButton()
+            }
+            host.onImeHeight = { desktopControls.imeHeightPx = it }
             root.addView(host)
         }
         desktopKeyboardButton = com.droiddeck.launcher.input.DesktopKeyboardButton(this) { keyboard?.show() }
@@ -897,6 +929,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback, com.droidde
             override fun onResolvePointerIcon(event: MotionEvent, pointerIndex: Int): android.view.PointerIcon? =
                 if (platformPointerShown == true) super.onResolvePointerIcon(event, pointerIndex) else null
         }.apply { addView(sessionOverlay) })
+        root.addView(createDesktopControls())
         setContentView(root)
         glassesScope.launch { Glasses.state.collect {
             glasses = it
@@ -969,6 +1002,142 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback, com.droidde
             }
         })
         watchSession()
+    }
+
+    private fun createDesktopControls(): ComposeView = ComposeView(this).apply {
+        isFocusable = false
+        isFocusableInTouchMode = false
+        setContent {
+            val visible = SessionState.mode == SessionService.MODE_DESKTOP && resumed && !pipUi && !loading.visible &&
+                !drawerOpenState && !pcKeyboardOpen && !achievementsOpen && !inputSettingsOpen && !gestureSettingsOpen &&
+                !bottomOutputActive && !glassesOutputActive && !SessionState.suspended
+            val pad = controllerSettings
+            androidx.compose.runtime.SideEffect {
+                desktopControls.tint = pad?.tint ?: android.graphics.Color.rgb(90, 160, 255)
+                desktopControls.opacity = pad?.opacity ?: 100
+            }
+            DroidDeckTheme { com.droiddeck.launcher.ui.DesktopControls(desktopControls, desktopControlActions, visible) }
+        }
+    }
+
+    private val desktopControlActions = object : com.droiddeck.launcher.ui.DesktopControlsActions {
+        override fun toggleKeyboard() {
+            keyboardAutoShown = false
+            keyboard?.toggle()
+        }
+        override fun togglePcKeyboard() = this@SessionActivity.togglePcKeyboard()
+        override fun toggleTouchMode() {
+            val next = if (desktopControls.touchpad) SessionPrefs.TOUCH_DIRECT else SessionPrefs.TOUCH_AUTO
+            SessionPrefs.setTouchMode(this@SessionActivity, next)
+            readPrefs()
+        }
+        override fun rightClick() = desktopRightClick()
+        override fun scale(percent: Int) = setDesktopScale(percent)
+        override fun openDisplay() {
+            drawerPage = if (secondScreenDisplays.isNotEmpty()) com.droiddeck.launcher.ui.SessionDrawerPage.SECOND_SCREEN
+                else com.droiddeck.launcher.ui.SessionDrawerPage.DISPLAY
+            drawerOpen = true
+        }
+        override fun openMenu() {
+            drawerOpen = true
+        }
+        override fun settings(settings: com.droiddeck.launcher.input.DesktopInputPrefs.Settings) {
+            desktopControls.settings = settings
+            com.droiddeck.launcher.input.DesktopInputPrefs.write(this@SessionActivity, settings)
+            applyDesktopInputSettings()
+        }
+        override fun moved(x: Float, y: Float) =
+            com.droiddeck.launcher.input.DesktopInputPrefs.setToolbarPosition(this@SessionActivity, x, y)
+        override fun expanded(expanded: Boolean) {
+            desktopControls.expanded = expanded
+            com.droiddeck.launcher.input.DesktopInputPrefs.setToolbarExpanded(this@SessionActivity, expanded)
+        }
+        override fun key(code: Int, down: Boolean) {
+            desktopText?.press(code, down)
+        }
+        override fun chord(mods: Set<Int>, code: Int) {
+            desktopText?.chord(mods, code)
+        }
+        override fun modifier(code: Int) {
+            desktopText?.let { it.oneShot = if (code in it.oneShot) it.oneShot - code else it.oneShot + code }
+        }
+    }
+
+    private fun syncDesktopTouchMode(mode: String) {
+        desktopControls.touchpad = mode == SessionPrefs.TOUCH_PAD || mode == SessionPrefs.TOUCH_AUTO
+        if (desktopControls.touchpad) desktopControls.rightClickArmed = false
+    }
+
+    private fun applyDesktopInputSettings() {
+        desktopText?.settings = desktopControls.settings
+        applyTouchRouting()
+        keyboard?.restartInput()
+    }
+
+    private fun desktopRightClick() {
+        if (!desktopControls.touchpad) {
+            desktopControls.rightClickArmed = !desktopControls.rightClickArmed
+            return
+        }
+        if (!::touchpad.isInitialized || touchpad.bounds.width() <= 1f) return
+        val x = touchpad.x
+        val y = touchpad.y
+        pointerListener.onButton(PointerGestures.BTN_RIGHT, true, x, y)
+        uiHandler.postDelayed({ pointerListener.onButton(PointerGestures.BTN_RIGHT, false, x, y) }, 50L)
+    }
+
+    private fun desktopRightClickTouch(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN && desktopControls.rightClickArmed) {
+            desktopControls.rightClickArmed = false
+            rightClickTouch = true
+            directTouchHold.cancel()
+            val rect = drawnRect() ?: return true
+            val x = event.x.coerceIn(rect.left, rect.right)
+            val y = event.y.coerceIn(rect.top, rect.bottom)
+            pointerListener.onButton(PointerGestures.BTN_RIGHT, true, x, y)
+            uiHandler.postDelayed({ pointerListener.onButton(PointerGestures.BTN_RIGHT, false, x, y) }, 50L)
+            return true
+        }
+        if (!rightClickTouch) return false
+        if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) rightClickTouch = false
+        return true
+    }
+
+    private fun setDesktopScale(percent: Int) {
+        desktopControls.scale = percent
+        desktopScaleWanted = percent
+        uiHandler.removeCallbacks(desktopScaleRun)
+        uiHandler.postDelayed(desktopScaleRun, DESKTOP_SCALE_SETTLE_MS)
+    }
+
+    private fun applyDesktopScale() {
+        val percent = desktopScaleWanted
+        desktopControls.scaleBusy = true
+        val app = applicationContext
+        Thread({
+            val request = org.json.JSONObject()
+                .put("kind", "exec")
+                .put("argv", org.json.JSONArray(listOf(DESKTOP_SCALE_HELPER, "set", percent.toString())))
+                .put("timeout", 25.0)
+            val result = runCatching { AgentGuest.call(app, request, 30_000, trusted = true) }
+            val answer = result.getOrNull()
+            val applied = answer?.optBoolean("ok") == true && answer.optInt("exitCode", -1) == 0 && !answer.optBoolean("timedOut")
+            val reason = if (applied) null else answer?.optJSONObject("stdout")?.optString("text")
+                ?.let { runCatching { org.json.JSONObject(it).optString("error") }.getOrNull() }
+                ?.takeIf { it.isNotBlank() } ?: result.exceptionOrNull()?.message ?: answer?.optString("error")
+            uiHandler.post {
+                if (desktopScaleWanted != percent) return@post
+                desktopControls.scaleBusy = false
+                if (applied) {
+                    com.droiddeck.launcher.input.DesktopInputPrefs.setScale(this, percent)
+                    Log.i(TAG, "KDE scale set to $percent%")
+                } else {
+                    desktopControls.scale = com.droiddeck.launcher.input.DesktopInputPrefs.scale(this)
+                    Log.w(TAG, "KDE scale $percent% not applied: $reason")
+                    Toast.makeText(this, getString(R.string.desktop_scale_failed, reason.orEmpty()), Toast.LENGTH_LONG).show()
+                }
+            }
+        }, "desktop-scale").start()
     }
 
     private fun createSessionOverlay(): ComposeView = ComposeView(this).apply {
@@ -2088,6 +2257,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback, com.droidde
         val nextRoutedTouchMode = effectiveTouchMode()
         if (routedTouchMode != nextRoutedTouchMode) gestureTouchStreamGate.reset()
         routedTouchMode = nextRoutedTouchMode
+        syncDesktopTouchMode(nextRoutedTouchMode)
         requestRelativeMouse()
         loadFrameGenFor(frameGenTargetGameId())
         fexPreset = SessionPrefs.fexPreset(this)
@@ -4107,8 +4277,13 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback, com.droidde
         val next = effectiveTouchMode()
         if (::touchpad.isInitialized) {
             val speed = steamTouchOptions?.trackpadSensitivity?.takeIf { steamTouchControls?.visibility == View.VISIBLE } ?: 1f
-            touchpad.sensitivity = 1.15f * speed
+            val desktop = SessionState.mode == SessionService.MODE_DESKTOP
+            val settings = desktopControls.settings
+            touchpad.sensitivity = 1.15f * speed * (if (desktop) settings.pointerSpeed else 1f)
+            touchpad.longPressRightClick = settings.longPressRightClick
+            touchpad.scrollSpeed = if (desktop) settings.scrollSpeed else 1f
         }
+        syncDesktopTouchMode(next)
         if (next == routedTouchMode) return
         if (::touchscreenGestures.isInitialized) touchscreenGestures.cancel()
         gesturePointerReady = false
@@ -4337,6 +4512,8 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback, com.droidde
                         placeTouchpadAtGuest(rect)
                     }
                     touchpad.onTouch(event)
+                } else if (desktopRightClickTouch(event)) {
+                    true
                 } else {
                     dispatchDirectTouch(event)
                 }
@@ -4742,15 +4919,20 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback, com.droidde
         if (host != null && desktopTextInput()) {
             val tapped = android.os.SystemClock.uptimeMillis() - lastUserPressMs < TEXT_FIELD_TAP_MS
             if (focused && tapped && resumed && !pcKeyboardOpen &&
-                resources.configuration.hardKeyboardHidden != android.content.res.Configuration.HARDKEYBOARDHIDDEN_NO) host.show()
-            else if (!focused && host.shown) host.hide()
+                resources.configuration.hardKeyboardHidden != android.content.res.Configuration.HARDKEYBOARDHIDDEN_NO) {
+                if (!host.shown) keyboardAutoShown = true
+                host.show()
+            } else if (!focused && host.shown && keyboardAutoShown) {
+                keyboardAutoShown = false
+                host.hide()
+            }
         }
         updateDesktopKeyboardButton()
     }
 
     private fun updateDesktopKeyboardButton() {
         val button = desktopKeyboardButton ?: return
-        val show = desktopTextInput() && AgentGuest.desktopTextField && !pcKeyboardOpen &&
+        val show = desktopTextInput() && AgentGuest.desktopTextField && !pcKeyboardOpen && !desktopControls.settings.toolbar &&
             !(keyboard?.let { it.shown && (Build.VERSION.SDK_INT < 30 || it.imeShowing) } ?: false)
         val visibility = if (show) View.VISIBLE else View.GONE
         if (button.visibility == visibility) return
@@ -4762,6 +4944,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback, com.droidde
         SessionState.mode == SessionService.MODE_STEAM && AgentGuest.steamKeyboard
 
     private fun releaseHeldGuestInput() {
+        desktopText?.release()
         mouseBackInput.cancel()
         heldButtons.release(1 or 2 or 8 or 16)
         guestKeysDown.toList().forEach { sendGuestKey(it, false) }
@@ -5044,6 +5227,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback, com.droidde
             inputSettingsOpen = false
         }
         releasePads()
+        desktopText?.release()
         heldKeys.clear()
         heldButtons.clear()
         if (!screenOff) {
@@ -5663,6 +5847,8 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback, com.droidde
             frameGenRequests.incrementAndGet()
         }
         if (AgentGuest.readyListener === agentReadyListener) AgentGuest.readyListener = null
+        uiHandler.removeCallbacks(desktopScaleRun)
+        desktopText?.close()
         com.droiddeck.launcher.input.HomeButtonShortcuts.detach(this)
         relativeMouseRequests.shutdownNow()
         backQamInput.cancel()
@@ -5771,6 +5957,8 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback, com.droidde
         const val EXTRA_REPAIR_RUNTIME = "repairRuntime"
         private const val LEAVE_TIMEOUT_MS = 1_500L
         private const val TEXT_FIELD_TAP_MS = 1_000L
+        private const val DESKTOP_SCALE_SETTLE_MS = 600L
+        private const val DESKTOP_SCALE_HELPER = "/usr/local/bin/droiddeck-desktop-scale"
         private const val PAUSED_FRAME_MAX_EDGE = 1920f
         private const val PAUSED_FRAME_REDRAW_MS = 150L
         private const val BOTTOM_RECOVERY_MS = 1_000L

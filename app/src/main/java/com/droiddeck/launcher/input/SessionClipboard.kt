@@ -78,6 +78,13 @@ class SessionClipboard(context: Context, private val hasFocus: () -> Boolean) {
         handler.removeCallbacksAndMessages(null)
     }
 
+    /** Puts [text] on the guest's clipboard only, for a paste the app types itself. */
+    fun share(text: String): Boolean {
+        if (!active) return false
+        publish(text)
+        return true
+    }
+
     fun refresh(changed: Boolean = false) {
         if (!active || !hasFocus()) return
         val clip = clipboard.primaryClip
