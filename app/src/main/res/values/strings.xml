@@ -4084,4 +4084,14 @@
     <string name="soundtracks_no_tracks">No audio files found in this soundtrack</string>
     <string name="stores_rockstar_launch_unavailable">Launch unavailable</string>
     <string name="agent_browser_unavailable">No web browser is available to open this link.</string>
+    <string name="mobile_desktop_title">Mobile desktop controls</string>
+    <string name="mobile_desktop_scale">Desktop interface size</string>
+    <string name="mobile_desktop_scale_hint">Change the guest display resolution so windows and text appear larger. This can rearrange open windows.</string>
+    <string name="mobile_desktop_scale_factor">%1$d%%</string>
+    <string name="mobile_touch_mode_hint">Switch between trackpad, direct touch and custom gestures.</string>
+    <string name="mobile_gesture_hint">Two fingers scroll or pinch; three-finger tap shows the Android keyboard in desktop trackpad mode.</string>
+    <string name="mobile_external_display">Second-screen panel</string>
+    <string name="mobile_external_display_hint">Choose controls or a desktop panel on the external display; this does not move the full KDE session.</string>
+    <string name="mobile_external_target">Choose external display</string>
+    <string name="mobile_desktop_note">The floating keyboard button appears on phones during a desktop session. Pinch zoom affects apps; interface size changes the full guest resolution. Keyboard, display and gesture settings remain available below.</string>
 </resources>

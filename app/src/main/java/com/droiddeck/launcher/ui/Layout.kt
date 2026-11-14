@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 val NarrowPaneWidth = 520.dp
 
 val LocalNarrowPane = compositionLocalOf { false }
+val LocalPhoneNavigation = compositionLocalOf { false }
 
 @Composable
 internal fun isNarrowScreen(): Boolean = LocalConfiguration.current.screenWidthDp < 600

@@ -97,6 +97,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.droiddeck.launcher.DesktopQuickControls
 import com.droiddeck.launcher.HomeApp
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -258,6 +259,8 @@ class DrawerActions(
     val onGameOnBottom: (Boolean) -> Unit = {},
     val dashboardAvailable: Boolean = false,
     val desktopAvailable: Boolean = false,
+    val desktopScale: Float = 1f,
+    val onDesktopScale: (Float) -> Unit = {},
     val secondScreenDisplays: List<SecondScreenDisplay>,
     val selectedSecondScreenDisplay: Int,
     val onHud: (Boolean) -> Unit,
@@ -618,6 +621,8 @@ internal fun SessionDrawer(open: Boolean, requestedPage: SessionDrawerPage, cont
                             if (!a.glassesOutput) CardboardGroup(host, a) { key -> focus.track(page, key) }
                         }
                         SessionDrawerPage.CONTROLLER -> {
+                            if (a.desktop && androidx.compose.ui.platform.LocalConfiguration.current.smallestScreenWidthDp < 600)
+                                DesktopPhoneQuickActions(host, a) { key -> focus.track(page, key) }
                             SettingsGroup(stringResource(R.string.drawer_page_controller)) {
                                 InputQuickSettings(host, desktop = a.desktop, onChanged = a.onInputSelection, onEdit = a.onInputSettings) { key -> focus.track(page, key) }
                             }
@@ -1047,6 +1052,58 @@ private fun DrawerPageTabs(page: SessionDrawerPage, pages: List<SessionDrawerPag
         }
         if (scrolling) Row(Modifier.fillMaxWidth().horizontalScroll(scroll), horizontalArrangement = Arrangement.spacedBy(4.dp)) { tabs() }
         else tabs()
+    }
+}
+
+@Composable
+private fun DesktopPhoneQuickActions(host: MenuHost, a: DrawerActions, track: (String) -> Modifier) {
+    val colors = MaterialTheme.colorScheme
+    SettingsGroup(stringResource(R.string.mobile_desktop_title)) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+        ) {
+            DrawerOutlineButton(stringResource(R.string.drawer_android_keyboard),
+                modifier = Modifier.weight(1f).height(48.dp).then(track("mobile-android-keyboard"))) {
+                host.open = null
+                a.onKeyboard()
+            }
+            DrawerOutlineButton(stringResource(R.string.drawer_pc_keyboard),
+                modifier = Modifier.weight(1f).height(48.dp).then(track("mobile-pc-keyboard"))) {
+                host.open = null
+                a.onHardwareKeyboard()
+            }
+        }
+        ChoiceRow(host, "mobile-desktop-scale", stringResource(R.string.mobile_desktop_scale),
+            stringResource(R.string.mobile_desktop_scale_hint),
+            DesktopQuickControls.SCALES.map { it to stringResource(R.string.mobile_desktop_scale_factor, (it * 100).toInt()) } +
+                (if (a.desktopScale in DesktopQuickControls.SCALES) emptyList()
+                 else listOf(a.desktopScale to stringResource(R.string.mobile_desktop_scale_factor, (a.desktopScale * 100).toInt()))),
+            a.desktopScale, chipModifier = track("mobile-desktop-scale"), onPick = a.onDesktopScale)
+        ChoiceRow(host, "mobile-touch-mode", stringResource(R.string.input_touchscreen),
+            stringResource(R.string.mobile_touch_mode_hint),
+            listOf(
+                SessionPrefs.TOUCH_PAD to stringResource(R.string.mode_touch_touchpad),
+                SessionPrefs.TOUCH_DIRECT to stringResource(R.string.mode_touch_direct),
+                SessionPrefs.TOUCH_GESTURES to stringResource(R.string.mode_touch_gestures),
+                SessionPrefs.TOUCH_AUTO to stringResource(R.string.common_auto),
+            ), a.touchMode, chipModifier = track("mobile-touch-mode"), onPick = a.onTouch)
+        ActionRow(stringResource(R.string.gesture_settings), stringResource(R.string.mobile_gesture_hint),
+            stringResource(R.string.ctrl_edit), a.onGestureSettings, modifier = track("mobile-gesture-settings"))
+        if (a.secondScreenDisplays.isNotEmpty()) {
+            ChoiceRow(host, "mobile-external-display", stringResource(R.string.mobile_external_display),
+                stringResource(R.string.mobile_external_display_hint),
+                DesktopQuickControls.externalModes(a.desktopAvailable).map { it to stringResource(it.label) },
+                a.secondScreenMode, chipModifier = track("mobile-external-display"), onPick = a.onSecondScreenMode)
+            if (a.secondScreenDisplays.size > 1) ChoiceRow(
+                host, "mobile-external-target", stringResource(R.string.mobile_external_target), null,
+                a.secondScreenDisplays.map { it.id to it.label },
+                a.selectedSecondScreenDisplay, chipModifier = track("mobile-external-target"),
+                onPick = a.onSecondScreenDisplay,
+            )
+        }
+        Text(stringResource(R.string.mobile_desktop_note), color = colors.onSurfaceVariant,
+            fontSize = 12.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
     }
 }
 
