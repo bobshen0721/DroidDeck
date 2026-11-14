@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
@@ -156,6 +157,42 @@ class NavTabsTest {
         compose.mainClock.advanceTimeBy(2_000)
         compose.onNode(hasText(ctx.getString(com.droiddeck.launcher.R.string.content_page_gone))).assertDoesNotExist()
         compose.onNode(hasTestTag("rail-games") and androidx.compose.ui.test.isSelected()).assertExists()
+    }
+
+    @Test fun phoneBottomBarShowsCoreDestinationsAndOneOverflowEntry() {
+        val s = state(downloads = 3)
+        assertEquals(listOf("steam", "games", "desktop", "setup", NavTabs.MORE), NavTabs.mobileBar(s))
+        assertEquals(listOf("soundtracks", "stores", "components", "updates"), NavTabs.mobileMore(s))
+        assertEquals(3, railCount(s, NavTabs.MORE, mobile = true))
+        compose.setContent {
+            DroidDeckTheme {
+                CompositionLocalProvider(LocalPhoneNavigation provides true) {
+                    BottomBar(s, "steam", {}, {}, actions(), Modifier.size(360.dp, 72.dp))
+                }
+            }
+        }
+        compose.onNodeWithTag("rail-steam").assertIsDisplayed()
+        compose.onNodeWithTag("rail-games").assertIsDisplayed()
+        compose.onNodeWithTag("rail-desktop").assertIsDisplayed()
+        compose.onNodeWithTag("rail-setup").assertIsDisplayed()
+        compose.onNodeWithTag("rail-more").assertIsDisplayed()
+        compose.onNodeWithTag("rail-stores").assertDoesNotExist()
+        compose.onNode(hasText("3") and hasParentTag("rail-more"), useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test fun phoneMorePageIncludesOverflowWithoutChangingSavedTabs() {
+        val s = state()
+        compose.setContent {
+            DroidDeckTheme {
+                CompositionLocalProvider(LocalPhoneNavigation provides true, LocalFrontFocus provides FrontFocus()) {
+                    FocusGlideHost { Box(Modifier.fillMaxSize()) { MorePage(s, actions(), {}, Modifier.fillMaxSize()) } }
+                }
+            }
+        }
+        compose.onNodeWithTag("more-stores").assertIsDisplayed()
+        compose.onNodeWithTag("more-components").assertIsDisplayed()
+        compose.onNodeWithTag("more-desktop").assertDoesNotExist()
+        assertTrue("desktop" in navigationKeys(s))
     }
 
     private fun hasParentTag(tag: String) = androidx.compose.ui.test.hasAnyAncestor(hasTestTag(tag))

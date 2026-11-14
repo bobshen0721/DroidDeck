@@ -17,6 +17,9 @@ class TouchpadGestures(
     var bounds: android.graphics.RectF = android.graphics.RectF(0f, 0f, 1f, 1f)
     var sensitivity = 1.15f
     var desktop = false
+    /** A long press clicks the right button instead of starting a drag (double-tap-and-drag still drags). */
+    var longPressRightClick = false
+    var scrollScale = 1f
 
     private val handler = Handler(Looper.getMainLooper())
     private var lastX = 0f
@@ -48,9 +51,13 @@ class TouchpadGestures(
     private var clicked = 0
     private val longPress = Runnable {
         held = true
-        dragging = true
         listener.onLongPress()
-        listener.onButton(PointerGestures.BTN_LEFT, true, x, y)
+        if (longPressRightClick) {
+            click(PointerGestures.BTN_RIGHT)
+        } else {
+            dragging = true
+            listener.onButton(PointerGestures.BTN_LEFT, true, x, y)
+        }
     }
     private val clickUp = Runnable { releaseClick() }
 
@@ -191,7 +198,7 @@ class TouchpadGestures(
                     val dx = scrollAnchorX - midX
                     val dy = scrollAnchorY - midY
                     if (scrolled || abs(dx) + abs(dy) > slopPx) {
-                        listener.onScroll(dx, dy)
+                        listener.onScroll(dx * scrollScale, dy * scrollScale)
                         scrollAnchorX = midX; scrollAnchorY = midY
                         scrolled = true
                         secondWasTap = false
@@ -201,10 +208,11 @@ class TouchpadGestures(
                 if (twoFingers && event.pointerCount >= 2) {
                     val mid = (event.getY(0) + event.getY(1)) / 2f
                     val dy = mid - scrollAnchorY
-                    val steps = (dy / TouchTiming.SCROLL_STEP_PX).toInt()
+                    val step = TouchTiming.SCROLL_STEP_PX / scrollScale.coerceAtLeast(0.1f)
+                    val steps = (dy / step).toInt()
                     if (steps != 0) {
                         listener.onWheel(-steps)
-                        scrollAnchorY += steps * TouchTiming.SCROLL_STEP_PX
+                        scrollAnchorY += steps * step
                         scrolled = true
                         secondWasTap = false
                     }

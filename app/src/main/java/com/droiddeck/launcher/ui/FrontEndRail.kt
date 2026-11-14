@@ -102,13 +102,14 @@ internal fun BottomBar(
     onSelect: (String) -> Unit, onFocusSelect: (String) -> Unit, a: FrontEndActions, modifier: Modifier,
 ) {
     val shown = Hops.railPreview ?: selected
-    val keys = navigationKeys(s)
+    val phoneNavigation = LocalPhoneNavigation.current
+    val keys = if (phoneNavigation) NavTabs.mobileBar(s) else navigationKeys(s)
     val bounds = remember { androidx.compose.runtime.mutableStateMapOf<String, androidx.compose.ui.geometry.Rect>() }
     val tint = androidx.compose.runtime.rememberUpdatedState(LocalPalette.current.signal)
     val content = remember { arrayOfNulls<LayoutCoordinates>(1) }
     val barContext = LocalContext.current
     remember { RailLabels.load(barContext) }
-    val iconOnly = !RailLabels.shown
+    val iconOnly = !phoneNavigation && !RailLabels.shown
     Row(modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface), verticalAlignment = Alignment.CenterVertically) {
         BoxWithConstraints(Modifier.weight(1f)) {
             val itemWidth = (maxWidth / keys.size).coerceIn(56.dp, 88.dp)
@@ -117,11 +118,11 @@ internal fun BottomBar(
                 Row(Modifier.selectableGroup().padding(vertical = 4.dp), horizontalArrangement = Arrangement.Center) {
                     NavigationItems(s, shown, compact = true, iconOnly = iconOnly, height = if (iconOnly) 48.dp else 56.dp, width = itemWidth,
                         place = { key -> Modifier.onGloballyPositioned { item -> content[0]?.let { bounds[key] = it.localBoundingBoxOf(item) }; Hops.railBounds[key] = item.boundsInRoot() } },
-                        onSelect = onSelect, onFocusSelect = onFocusSelect)
+                        onSelect = onSelect, onFocusSelect = onFocusSelect, keys = keys)
                 }
             }
         }
-        if (s.running != null) ResumeRailItem(s.running, compact = true, iconOnly = true, a.onResume)
+        if (s.running != null && !phoneNavigation) ResumeRailItem(s.running, compact = true, iconOnly = true, a.onResume)
     }
 }
 
@@ -207,16 +208,19 @@ internal fun railLabelIcon(key: String): Pair<Int, ImageVector> = when (key) {
 internal fun setupNeedsAttention(s: FrontEndState): Boolean = !s.ready || (s.available != null && s.available != s.installed) ||
     PhantomProcessLimit.blocksSteam(s.phantomProcessStatus) || com.droiddeck.launcher.sync.Syncthing.needsAttention
 
-internal fun railBadge(s: FrontEndState, key: String, setupNeedsAttention: Boolean = setupNeedsAttention(s)): Boolean = when (key) {
+internal fun railBadge(
+    s: FrontEndState, key: String, setupNeedsAttention: Boolean = setupNeedsAttention(s), mobile: Boolean = false,
+): Boolean = when (key) {
     "setup" -> setupNeedsAttention
     "updates" -> s.updates.hasUpdate
-    NavTabs.MORE -> NavTabs.more(s).any { it != NavTabs.MORE && railBadge(s, it, setupNeedsAttention) }
+    NavTabs.MORE -> (if (mobile) NavTabs.mobileMore(s) else NavTabs.more(s))
+        .any { it != NavTabs.MORE && railBadge(s, it, setupNeedsAttention, mobile) }
     else -> false
 }
 
-internal fun railCount(s: FrontEndState, key: String): Int = when (key) {
+internal fun railCount(s: FrontEndState, key: String, mobile: Boolean = false): Int = when (key) {
     "stores" -> s.storeDownloadsActive
-    NavTabs.MORE -> if ("stores" in NavTabs.more(s)) s.storeDownloadsActive else 0
+    NavTabs.MORE -> if ("stores" in (if (mobile) NavTabs.mobileMore(s) else NavTabs.more(s))) s.storeDownloadsActive else 0
     else -> 0
 }
 
@@ -224,14 +228,16 @@ internal fun railCount(s: FrontEndState, key: String): Int = when (key) {
 private fun NavigationItems(
     s: FrontEndState, shown: String, compact: Boolean, iconOnly: Boolean, height: Dp, width: Dp,
     place: (String) -> Modifier, onSelect: (String) -> Unit, onFocusSelect: (String) -> Unit,
+    keys: List<String> = navigationKeys(s),
 ) {
     val setupNeedsAttention = setupNeedsAttention(s)
-    for (key in navigationKeys(s)) {
+    val mobile = LocalPhoneNavigation.current
+    for (key in keys) {
         val (label, icon) = railLabelIcon(key)
         key(key) {
             RailItem(stringResource(label), icon, key, shown == key, compact, iconOnly, height, width,
-                badge = railBadge(s, key, setupNeedsAttention),
-                count = railCount(s, key),
+                badge = railBadge(s, key, setupNeedsAttention, mobile),
+                count = railCount(s, key, mobile),
                 place = place, onFocus = { onFocusSelect(key) }) { onSelect(key) }
         }
     }

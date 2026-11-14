@@ -100,5 +100,110 @@ class DesktopImeTest(unittest.TestCase):
         self.assertEqual(self.proc.wait(5), 1)
         self.assertFalse(self.state(2)['textField'])
 
+    def send_host(self, *commands):
+        fifo = self.session / 'agent/ime-input'
+        deadline = time.monotonic() + 5
+        while not fifo.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+        try:
+            for command in commands:
+                os.write(fd, (json.dumps(command, ensure_ascii=False) + '\n').encode())
+        finally:
+            os.close(fd)
+
+    def focus(self, context=100, serial=7):
+        self.server.sendall(message(3, 0, struct.pack('<I', context)))
+        self.assertTrue(self.state(1)['textField'])
+        self.server.sendall(message(context, 4, struct.pack('<I', serial)))
+
+    def test_android_text_is_committed_to_the_focused_field(self):
+        self.focus()
+        self.send_host({'op': 'commit', 'text': '繁體中文'})
+        expected = message(100, 1, struct.pack('<I', 7) + wl_string('繁體中文'))
+        self.assertEqual(self.read(len(expected)), expected)
+
+    def test_composition_is_sent_as_preedit_with_a_byte_cursor(self):
+        self.focus()
+        self.send_host({'op': 'preedit', 'text': 'ㄓㄨㄥ', 'cursor': 2})
+        cursor = message(100, 4, struct.pack('<i', len('ㄓㄨ'.encode())))
+        preedit = message(100, 2, struct.pack('<I', 7) + wl_string('ㄓㄨㄥ') + wl_string(''))
+        self.assertEqual(self.read(len(cursor) + len(preedit)), cursor + preedit)
+
+    def test_long_text_is_split_between_characters(self):
+        self.focus()
+        text = '測' * 1500
+        self.send_host({'op': 'commit', 'text': text})
+        first = message(100, 1, struct.pack('<I', 7) + wl_string('測' * 1000))
+        second = message(100, 1, struct.pack('<I', 7) + wl_string('測' * 500))
+        self.assertEqual(self.read(len(first) + len(second)), first + second)
+
+    def test_text_without_a_focused_field_is_dropped(self):
+        self.send_host({'op': 'commit', 'text': 'lost'})
+        self.focus()
+        self.send_host({'op': 'commit', 'text': 'ok'})
+        expected = message(100, 1, struct.pack('<I', 7) + wl_string('ok'))
+        self.assertEqual(self.read(len(expected)), expected)
+
+    def test_malformed_lines_do_not_stop_the_channel(self):
+        self.focus()
+        fifo = self.session / 'agent/ime-input'
+        fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+        os.write(fd, b'not json\n\xff\xfe\n')
+        os.close(fd)
+        self.send_host({'op': 'commit', 'text': 'a'})
+        expected = message(100, 1, struct.pack('<I', 7) + wl_string('a'))
+        self.assertEqual(self.read(len(expected)), expected)
+
+
+class DesktopScaleTest(unittest.TestCase):
+    def load(self):
+        import importlib.machinery
+        import importlib.util
+        loader = importlib.machinery.SourceFileLoader('droiddeck_ime', str(IME))
+        spec = importlib.util.spec_from_loader('droiddeck_ime', loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        return module
+
+    def test_only_offered_scales_are_accepted(self):
+        ime = self.load()
+        self.assertEqual(ime.parse_scale(1.25), 1.25)
+        self.assertEqual(ime.parse_scale('1.75'), 1.75)
+        self.assertIsNone(ime.parse_scale(1.3))
+        self.assertIsNone(ime.parse_scale('x'))
+
+    def test_scale_reaches_every_enabled_output_on_the_nested_socket(self):
+        ime = self.load()
+        calls = []
+
+        class Result:
+            def __init__(self, stdout=b'', returncode=0):
+                self.stdout, self.returncode = stdout, returncode
+
+        def run(args, **kwargs):
+            calls.append((args, kwargs['env'].get('WAYLAND_DISPLAY'), 'WAYLAND_SOCKET' in kwargs['env']))
+            if args == ['kscreen-doctor', '-j']:
+                return Result(json.dumps({'outputs': [
+                    {'name': 'WL-1', 'enabled': True}, {'name': 'WL-2', 'enabled': False}]}).encode())
+            return Result()
+
+        old = dict(os.environ)
+        os.environ.update(BL_DESKTOP='1', WAYLAND_SOCKET='5')
+        try:
+            self.assertTrue(ime.apply_scale(1.5, run))
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
+        self.assertEqual(calls[1][0], ['kscreen-doctor', 'output.WL-1.scale.1.5'])
+        self.assertEqual({(c[1], c[2]) for c in calls}, {('wayland-1', False)})
+
+    def test_chunks_respect_the_request_limit(self):
+        ime = self.load()
+        chunks = list(ime.text_chunks('a測😀' * 800))
+        self.assertEqual(''.join(chunks), 'a測😀' * 800)
+        self.assertTrue(all(len(c.encode()) <= ime.TEXT_CHUNK for c in chunks))
+
+
 if __name__ == '__main__':
     unittest.main()

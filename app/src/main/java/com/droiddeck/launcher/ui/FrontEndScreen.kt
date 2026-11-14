@@ -453,12 +453,15 @@ internal suspend fun focusSoon(target: () -> FocusRequester) {
 @Composable
 fun FrontEndScreen(s: FrontEndState, a: FrontEndActions, page: (@Composable () -> Unit)? = null) {
     val frontFocus = remember { FrontFocus() }
+    val mobileNavigation = !s.dualScreen &&
+        androidx.compose.ui.platform.LocalConfiguration.current.smallestScreenWidthDp < 600
     val textInput = androidx.compose.ui.platform.LocalTextInputService.current
     val bottomTextInput = remember(textInput) { textInput?.let { androidx.compose.ui.text.input.TextInputService(BottomScreenTextInput(it)) } }
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
         CompositionLocalProvider(
             LocalFrontFocus provides frontFocus,
-            LocalNarrowPane provides (maxWidth < NarrowPaneWidth),
+            LocalPhoneNavigation provides mobileNavigation,
+            LocalNarrowPane provides (maxWidth < NarrowPaneWidth || mobileNavigation),
             androidx.compose.ui.platform.LocalTextInputService provides (if (s.dualScreen) bottomTextInput else textInput),
             LocalBottomTyping provides s.dualScreen,
         ) { FrontEndScreenBody(s, a, page, frontFocus) }
@@ -468,6 +471,7 @@ fun FrontEndScreen(s: FrontEndState, a: FrontEndActions, page: (@Composable () -
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun FrontEndScreenBody(s: FrontEndState, a: FrontEndActions, page: (@Composable () -> Unit)?, frontFocus: FrontFocus) {
+    val mobileNavigation = LocalPhoneNavigation.current
     var selected by rememberSaveable {
         mutableStateOf(if (s.shortcutPicker) "games" else if (NavTabs.place(s, "steam") == TabPlace.HIDDEN) navigationKeys(s).first { it != "components" } else "steam")
     }
@@ -577,7 +581,8 @@ private fun FrontEndScreenBody(s: FrontEndState, a: FrontEndActions, page: (@Com
     ) {
         selected = if (selected.startsWith("rom:")) "emu:" + selected.removePrefix("rom:").substringBefore(':') else "desktop"
     }
-    val backToMore = s.pageKey == null && Hops.origin == null && selected in NavTabs.more(s)
+    val overflow = if (mobileNavigation) NavTabs.mobileMore(s) else NavTabs.more(s)
+    val backToMore = s.pageKey == null && Hops.origin == null && selected in overflow
     BackHandler(enabled = !processSettingsPageVisible && backToMore) {
         selected = NavTabs.MORE
     }
@@ -602,7 +607,7 @@ private fun FrontEndScreenBody(s: FrontEndState, a: FrontEndActions, page: (@Com
         selected.startsWith("emu:") || selected.startsWith("rom:") || selected.startsWith("user:") || selected == "store" -> "desktop"
         else -> s.pageKey ?: selected
     }
-    val railSelection = if (openTab in NavTabs.more(s)) NavTabs.MORE else openTab
+    val railSelection = if (openTab in overflow) NavTabs.MORE else openTab
     val railSelectionNow = androidx.compose.runtime.rememberUpdatedState(railSelection)
     var railPicks by remember { mutableStateOf(0) }
     val showRailPage: (String, Boolean) -> Unit = { key, focusContent ->
@@ -649,7 +654,7 @@ private fun FrontEndScreenBody(s: FrontEndState, a: FrontEndActions, page: (@Com
             .windowInsetsPadding(if (s.launcherFullscreen) WindowInsets.displayCutout else WindowInsets.systemBars)
             .onFocusChanged { anyFocused = it.hasFocus },
     ) {
-        val bottomNavigation = maxHeight > maxWidth
+        val bottomNavigation = mobileNavigation || maxHeight > maxWidth
         LaunchedEffect(processSettingsPageVisible) {
             if (processSettingsPageVisible) return@LaunchedEffect
             snapshotFlow { window.isWindowFocused }.first { it }
