@@ -262,6 +262,50 @@ class TouchpadGesturesTest {
         assertFalse(events.contains("left down"))
     }
 
+    @Test fun desktopLongPressClicksTheRightButtonWhenAsked() {
+        touchpad.desktop = true
+        touchpad.longPressRightClick = true
+        touch(MotionEvent.ACTION_DOWN, 0, 1 to (400f to 300f))
+        advance(TouchTiming.HOLD_MS + 10)
+        assertEquals(listOf("long press", "right down"), events)
+        advance(100)
+        touch(MotionEvent.ACTION_UP, 0, 1 to (400f to 300f))
+        advance(200)
+        assertEquals(listOf("long press", "right down", "right up"), events)
+    }
+
+    @Test fun longPressStillHoldsTheLeftButtonOutsideTheDesktop() {
+        touchpad.longPressRightClick = true
+        touch(MotionEvent.ACTION_DOWN, 0, 1 to (400f to 300f))
+        advance(TouchTiming.HOLD_MS + 10)
+        touch(MotionEvent.ACTION_UP, 0, 1 to (400f to 300f))
+        assertEquals(listOf("long press", "left down", "left up"), events)
+    }
+
+    @Test fun aCancelledDesktopScrollIsEnded() {
+        touchpad.desktop = true
+        touch(MotionEvent.ACTION_DOWN, 0, 1 to (400f to 300f))
+        advance(10)
+        touch(MotionEvent.ACTION_POINTER_DOWN, 1, 1 to (400f to 300f), 2 to (600f to 300f))
+        for (step in 1..3) {
+            advance(16)
+            touch(MotionEvent.ACTION_MOVE, 0, 1 to (400f to 300f + step * 20f), 2 to (600f to 300f + step * 20f))
+        }
+        touch(MotionEvent.ACTION_CANCEL, 0, 1 to (400f to 360f), 2 to (600f to 360f))
+        assertEquals("scroll end", events.last())
+        assertEquals(1, events.count { it == "scroll end" })
+    }
+
+    @Test fun scrollSpeedScalesWheelSteps() {
+        touchpad.scrollSpeed = 2f
+        touch(MotionEvent.ACTION_DOWN, 0, 1 to (400f to 300f))
+        advance(10)
+        touch(MotionEvent.ACTION_POINTER_DOWN, 1, 1 to (400f to 300f), 2 to (600f to 310f))
+        advance(10)
+        touch(MotionEvent.ACTION_MOVE, 0, 1 to (400f to 600f), 2 to (600f to 610f))
+        assertTrue(events.contains("wheel -16"))
+    }
+
     private fun tap() {
         touch(MotionEvent.ACTION_DOWN, 0, 1 to (400f to 300f))
         advance(80)

@@ -17,6 +17,9 @@ class TouchpadGestures(
     var bounds: android.graphics.RectF = android.graphics.RectF(0f, 0f, 1f, 1f)
     var sensitivity = 1.15f
     var desktop = false
+    /** On the desktop, a long press clicks the right button instead of holding the left one to drag. */
+    var longPressRightClick = false
+    var scrollSpeed = 1f
 
     private val handler = Handler(Looper.getMainLooper())
     private var lastX = 0f
@@ -46,11 +49,16 @@ class TouchpadGestures(
     private var holdDrag = false
     private var scrollLocked = false
     private var clicked = 0
+    private var scrollOpen = false
     private val longPress = Runnable {
         held = true
-        dragging = true
         listener.onLongPress()
-        listener.onButton(PointerGestures.BTN_LEFT, true, x, y)
+        if (desktop && longPressRightClick) {
+            click(PointerGestures.BTN_RIGHT)
+        } else {
+            dragging = true
+            listener.onButton(PointerGestures.BTN_LEFT, true, x, y)
+        }
     }
     private val clickUp = Runnable { releaseClick() }
 
@@ -78,6 +86,13 @@ class TouchpadGestures(
         anchorId = -1
         moverId = -1
         lastTapAt = 0L
+        endScroll()
+    }
+
+    private fun endScroll() {
+        if (!scrollOpen) return
+        scrollOpen = false
+        listener.onScrollEnd()
     }
 
     fun place(px: Float, py: Float) {
@@ -191,7 +206,8 @@ class TouchpadGestures(
                     val dx = scrollAnchorX - midX
                     val dy = scrollAnchorY - midY
                     if (scrolled || abs(dx) + abs(dy) > slopPx) {
-                        listener.onScroll(dx, dy)
+                        listener.onScroll(dx * scrollSpeed, dy * scrollSpeed)
+                        scrollOpen = true
                         scrollAnchorX = midX; scrollAnchorY = midY
                         scrolled = true
                         secondWasTap = false
@@ -201,10 +217,11 @@ class TouchpadGestures(
                 if (twoFingers && event.pointerCount >= 2) {
                     val mid = (event.getY(0) + event.getY(1)) / 2f
                     val dy = mid - scrollAnchorY
-                    val steps = (dy / TouchTiming.SCROLL_STEP_PX).toInt()
+                    val stepPx = TouchTiming.SCROLL_STEP_PX / scrollSpeed
+                    val steps = (dy / stepPx).toInt()
                     if (steps != 0) {
                         listener.onWheel(-steps)
-                        scrollAnchorY += steps * TouchTiming.SCROLL_STEP_PX
+                        scrollAnchorY += steps * stepPx
                         scrolled = true
                         secondWasTap = false
                     }
@@ -238,7 +255,7 @@ class TouchpadGestures(
                 event.findPointerIndex(anchorId).takeIf { it >= 0 && it != event.actionIndex }?.let {
                     lastX = event.getX(it); lastY = event.getY(it)
                 }
-                if (desktop && scrolled && event.pointerCount == 2) listener.onScrollEnd()
+                if (desktop && scrolled && event.pointerCount == 2) endScroll()
                 if (fingers >= 3) {
                     if (event.pointerCount == 2 && secondWasTap && !scrolled && event.eventTime - downAt < TouchTiming.TAP_MS * 2 &&
                         !listener.onThreeFingerTap())
@@ -260,7 +277,7 @@ class TouchpadGestures(
                             click(PointerGestures.BTN_RIGHT)
                         }
                     }
-                    !cancelled && travelled <= slopPx && event.eventTime - downAt < TouchTiming.TAP_MS -> {
+                    !cancelled && !held && travelled <= slopPx && event.eventTime - downAt < TouchTiming.TAP_MS -> {
                         click(PointerGestures.BTN_LEFT)
                         lastTapAt = event.eventTime
                     }
@@ -268,6 +285,7 @@ class TouchpadGestures(
                 dragging = false; held = false; twoFingers = false
                 holdDrag = false; scrollLocked = false; anchorId = -1; moverId = -1
                 pinching = false; fingers = 0
+                endScroll()
                 return true
             }
         }
