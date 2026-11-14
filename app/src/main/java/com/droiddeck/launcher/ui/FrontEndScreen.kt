@@ -581,6 +581,7 @@ private fun FrontEndScreenBody(s: FrontEndState, a: FrontEndActions, page: (@Com
     ) {
         selected = if (selected.startsWith("rom:")) "emu:" + selected.removePrefix("rom:").substringBefore(':') else "desktop"
     }
+    val overflow = if (mobileNavigation) NavTabs.mobileMore(s) else NavTabs.more(s)
     val backToMore = s.pageKey == null && Hops.origin == null && selected in overflow
     BackHandler(enabled = !processSettingsPageVisible && backToMore) {
         selected = NavTabs.MORE
@@ -606,7 +607,6 @@ private fun FrontEndScreenBody(s: FrontEndState, a: FrontEndActions, page: (@Com
         selected.startsWith("emu:") || selected.startsWith("rom:") || selected.startsWith("user:") || selected == "store" -> "desktop"
         else -> s.pageKey ?: selected
     }
-    val overflow = if (mobileNavigation) NavTabs.mobileMore(s) else NavTabs.more(s)
     val railSelection = if (openTab in overflow) NavTabs.MORE else openTab
     val railSelectionNow = androidx.compose.runtime.rememberUpdatedState(railSelection)
     var railPicks by remember { mutableStateOf(0) }
