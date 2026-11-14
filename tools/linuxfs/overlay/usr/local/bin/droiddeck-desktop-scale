@@ -1,0 +1,88 @@
+#!/usr/bin/python3
+import json
+import os
+import subprocess
+import sys
+
+MIN_PERCENT = 50
+MAX_PERCENT = 300
+TIMEOUT = 20
+
+
+class ScaleError(Exception):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
+def kwin_env():
+    env = dict(os.environ)
+    display = env.get("DROIDDECK_KWIN_DISPLAY", "wayland-1")
+    runtime = env.get("XDG_RUNTIME_DIR", "")
+    if not runtime or not os.path.exists(os.path.join(runtime, display)):
+        raise ScaleError(3, "the KDE desktop is not running")
+    # The desktop's apps talk to KWin's nested display; the session's own display is the Android compositor.
+    env.update(WAYLAND_DISPLAY=display, QT_QPA_PLATFORM="wayland",
+               KSCREEN_BACKEND="KWayland", KSCREEN_BACKEND_INPROCESS="1")
+    return env
+
+
+def doctor(env, *args):
+    try:
+        done = subprocess.run(["kscreen-doctor", *args], env=env, capture_output=True, text=True, timeout=TIMEOUT)
+    except FileNotFoundError:
+        raise ScaleError(4, "kscreen-doctor is not installed")
+    except subprocess.TimeoutExpired:
+        raise ScaleError(5, "kscreen-doctor did not answer")
+    if done.returncode != 0:
+        raise ScaleError(6, (done.stderr or done.stdout).strip() or "kscreen-doctor failed (%d)" % done.returncode)
+    return done.stdout
+
+
+def outputs(env):
+    try:
+        config = json.loads(doctor(env, "-j"))
+    except ValueError:
+        raise ScaleError(6, "kscreen-doctor printed no configuration")
+    found = [o for o in config.get("outputs", [])
+             if isinstance(o, dict) and o.get("enabled") and o.get("connected", True) and o.get("name")]
+    if not found:
+        raise ScaleError(7, "the desktop has no enabled output")
+    return found
+
+
+def factor(percent):
+    return ("%.2f" % (percent / 100)).rstrip("0").rstrip(".")
+
+
+def run(argv):
+    if argv[:1] == ["get"] and len(argv) == 1:
+        found = outputs(kwin_env())
+        return {"outputs": [{"name": o["name"], "scale": o.get("scale", 1)} for o in found]}
+    if argv[:1] == ["set"] and len(argv) == 2:
+        try:
+            percent = int(argv[1])
+        except ValueError:
+            percent = 0
+        if not MIN_PERCENT <= percent <= MAX_PERCENT:
+            raise ScaleError(2, "scale must be %d-%d percent" % (MIN_PERCENT, MAX_PERCENT))
+        env = kwin_env()
+        names = [o["name"] for o in outputs(env)]
+        doctor(env, *["output.%s.scale.%s" % (name, factor(percent)) for name in names])
+        return {"outputs": [{"name": name, "scale": percent / 100} for name in names]}
+    raise ScaleError(2, "usage: droiddeck-desktop-scale get | set <percent>")
+
+
+def main():
+    try:
+        result = dict(ok=True, **run(sys.argv[1:]))
+        code = 0
+    except ScaleError as error:
+        result = {"ok": False, "error": str(error)}
+        code = error.code
+    print(json.dumps(result))
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main())
