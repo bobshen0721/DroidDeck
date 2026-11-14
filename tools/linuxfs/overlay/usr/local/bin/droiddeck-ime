@@ -3,6 +3,7 @@ import json
 import os
 import select
 import socket
+import stat
 import struct
 import sys
 import time
@@ -11,6 +12,16 @@ DISPLAY_ID = 1
 REGISTRY_ID = 2
 METHOD_ID = 3
 SETTLE = 0.15
+INPUT_NAME = "ime-input"
+# libwayland rejects messages over 4096 bytes; the header, serial and string length take 16 of them.
+MAX_TEXT_BYTES = 3000
+MAX_PENDING_BYTES = 1 << 16
+
+COMMIT_STRING = 1
+PREEDIT_STRING = 2
+PREEDIT_CURSOR = 4
+CONTEXT_CONTENT_TYPE = 2
+CONTEXT_COMMIT_STATE = 4
 
 
 def wl_string(value):
@@ -25,6 +36,24 @@ def read_string(payload, offset):
     return text, start + length + (-length % 4)
 
 
+def utf8_chunks(text, limit=MAX_TEXT_BYTES):
+    chunk, size = [], 0
+    for ch in text:
+        width = len(ch.encode())
+        if chunk and size + width > limit:
+            yield "".join(chunk)
+            chunk, size = [], 0
+        chunk.append(ch)
+        size += width
+    if chunk:
+        yield "".join(chunk)
+
+
+def byte_offset(text, chars):
+    chars = max(0, min(len(text), chars))
+    return len(text[:chars].encode())
+
+
 class Connection:
     def __init__(self, sock):
         self.sock = sock
@@ -33,10 +62,7 @@ class Connection:
     def send(self, obj, opcode, payload=b""):
         self.sock.sendall(struct.pack("<II", obj, ((8 + len(payload)) << 16) | opcode) + payload)
 
-    def messages(self, timeout):
-        ready, _, _ = select.select([self.sock], [], [], timeout)
-        if not ready:
-            return []
+    def messages(self):
         data, _, _, _ = self.sock.recvmsg(65536, socket.CMSG_SPACE(16 * 4))
         if not data:
             raise EOFError
@@ -74,6 +100,128 @@ class Report:
         print(f"droiddeck-ime: text field {'focused' if field else 'left'}", file=sys.stderr, flush=True)
 
 
+class Typing:
+    """Text the Android keyboard sends, one JSON object per line, through a FIFO in the agent directory."""
+
+    def __init__(self, directory):
+        self.path = os.path.join(directory, INPUT_NAME) if directory else ""
+        self.fd = -1
+        self.keep = -1
+        self.pending = b""
+
+    def open(self):
+        if not self.path:
+            return
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            try:
+                if not stat.S_ISFIFO(os.lstat(self.path).st_mode):
+                    os.unlink(self.path)
+                    os.mkfifo(self.path, 0o600)
+            except FileNotFoundError:
+                os.mkfifo(self.path, 0o600)
+            self.fd = os.open(self.path, os.O_RDONLY | os.O_NONBLOCK)
+            # A reader with no writer sees EOF on every poll; holding a writer keeps the FIFO quiet between senders.
+            self.keep = os.open(self.path, os.O_WRONLY | os.O_NONBLOCK)
+        except OSError as error:
+            print(f"droiddeck-ime: no text channel ({error})", file=sys.stderr, flush=True)
+            self.close()
+
+    def close(self):
+        for fd in (self.fd, self.keep):
+            if fd >= 0:
+                os.close(fd)
+        self.fd = self.keep = -1
+
+    def requests(self):
+        out = []
+        while True:
+            try:
+                data = os.read(self.fd, 65536)
+            except BlockingIOError:
+                break
+            if not data:
+                break
+            self.pending += data
+        while b"\n" in self.pending:
+            line, self.pending = self.pending.split(b"\n", 1)
+            if not line.strip():
+                continue
+            try:
+                request = json.loads(line.decode())
+            except (UnicodeDecodeError, ValueError):
+                print("droiddeck-ime: ignored a malformed request", file=sys.stderr, flush=True)
+                continue
+            if isinstance(request, dict):
+                out.append(request)
+        if len(self.pending) > MAX_PENDING_BYTES:
+            self.pending = b""
+        return out
+
+
+class Method:
+    def __init__(self, conn, report):
+        self.conn = conn
+        self.report = report
+        self.contexts = {}
+        self.current = None
+
+    def activate(self, context):
+        self.contexts[context] = {"hint": 0, "purpose": 0, "serial": 0, "preedit": False}
+        self.current = context
+        self.report.write(True)
+
+    def deactivate(self, context):
+        self.contexts.pop(context, None)
+        self.conn.send(context, 0)
+        if context == self.current:
+            self.current = None
+            return True
+        return False
+
+    def event(self, obj, opcode, payload):
+        state = self.contexts.get(obj)
+        if state is None:
+            return
+        if opcode == CONTEXT_CONTENT_TYPE:
+            state["hint"], state["purpose"] = struct.unpack_from("<II", payload)
+            if obj == self.current:
+                self.report.write(True, state["hint"], state["purpose"])
+        elif opcode == CONTEXT_COMMIT_STATE:
+            (state["serial"],) = struct.unpack_from("<I", payload)
+
+    def handle(self, request):
+        op = request.get("op")
+        text = request.get("text", "")
+        if not isinstance(text, str) or op not in ("commit", "preedit"):
+            return
+        context = self.current
+        state = self.contexts.get(context)
+        if state is None:
+            if op == "commit" and text:
+                print(f"droiddeck-ime: typed text ({len(text)} chars) dropped: no text field has focus",
+                      file=sys.stderr, flush=True)
+            return
+        serial = struct.pack("<I", state["serial"])
+        if op == "preedit":
+            text = next(utf8_chunks(text), "")
+            cursor = request.get("cursor", len(text))
+            if not isinstance(cursor, int):
+                cursor = len(text)
+            if not text and not state["preedit"]:
+                return
+            self.conn.send(context, PREEDIT_CURSOR, struct.pack("<i", byte_offset(text, cursor)))
+            self.conn.send(context, PREEDIT_STRING, serial + wl_string(text) + wl_string(""))
+            state["preedit"] = bool(text)
+            return
+        if state["preedit"]:
+            self.conn.send(context, PREEDIT_CURSOR, struct.pack("<i", 0))
+            self.conn.send(context, PREEDIT_STRING, serial + wl_string("") + wl_string(""))
+            state["preedit"] = False
+        for chunk in utf8_chunks(text):
+            self.conn.send(context, COMMIT_STRING, serial + wl_string(chunk))
+
+
 def connect():
     fd = os.environ.pop("WAYLAND_SOCKET", "")
     if fd.isdigit():
@@ -85,54 +233,58 @@ def connect():
 
 def main():
     launch = os.environ.get("BL_LAUNCH_DIR", "")
-    report = Report(os.environ.get("BL_IME_DIR") or (os.path.join(launch, "agent") if launch else ""))
+    directory = os.environ.get("BL_IME_DIR") or (os.path.join(launch, "agent") if launch else "")
+    report = Report(directory)
+    typing = Typing(directory)
+    typing.open()
     conn = Connection(connect())
+    method = Method(conn, report)
     conn.send(DISPLAY_ID, 1, struct.pack("<I", REGISTRY_ID))
-    contexts = {}
-    current = None
     pending = None
     while True:
         timeout = None if pending is None else max(0.0, pending - time.monotonic())
-        try:
-            batch = conn.messages(timeout)
-        except (EOFError, ConnectionError):
-            report.write(False)
-            return 0
-        for obj, opcode, payload in batch:
-            if obj == DISPLAY_ID and opcode == 0:
-                _, code = struct.unpack_from("<II", payload)
-                message, _ = read_string(payload, 8)
-                print(f"droiddeck-ime: protocol error {code}: {message}", file=sys.stderr, flush=True)
+        sources = [conn.sock] + ([typing.fd] if typing.fd >= 0 else [])
+        ready, _, _ = select.select(sources, [], [], timeout)
+        if conn.sock in ready:
+            try:
+                batch = conn.messages()
+            except (EOFError, ConnectionError):
                 report.write(False)
-                return 1
-            if obj == REGISTRY_ID and opcode == 0:
-                (name,) = struct.unpack_from("<I", payload)
-                interface, offset = read_string(payload, 4)
-                (version,) = struct.unpack_from("<I", payload, offset)
-                if interface == "zwp_input_method_v1":
-                    conn.send(REGISTRY_ID, 0, struct.pack("<I", name) + wl_string(interface)
-                              + struct.pack("<II", min(version, 1), METHOD_ID))
-            elif obj == METHOD_ID and opcode == 0:
-                (context,) = struct.unpack_from("<I", payload)
-                contexts[context] = [0, 0]
-                current = context
-                pending = None
-                report.write(True)
-            elif obj == METHOD_ID and opcode == 1:
-                (context,) = struct.unpack_from("<I", payload)
-                contexts.pop(context, None)
-                conn.send(context, 0)
-                if context == current:
-                    current = None
-                    pending = time.monotonic() + SETTLE
-            elif obj in contexts and opcode == 2:
-                hint, purpose = struct.unpack_from("<II", payload)
-                contexts[obj] = [hint, purpose]
-                if obj == current:
-                    report.write(True, hint, purpose)
+                return 0
+            for obj, opcode, payload in batch:
+                if obj == DISPLAY_ID and opcode == 0:
+                    _, code = struct.unpack_from("<II", payload)
+                    message, _ = read_string(payload, 8)
+                    print(f"droiddeck-ime: protocol error {code}: {message}", file=sys.stderr, flush=True)
+                    report.write(False)
+                    return 1
+                if obj == REGISTRY_ID and opcode == 0:
+                    (name,) = struct.unpack_from("<I", payload)
+                    interface, offset = read_string(payload, 4)
+                    (version,) = struct.unpack_from("<I", payload, offset)
+                    if interface == "zwp_input_method_v1":
+                        conn.send(REGISTRY_ID, 0, struct.pack("<I", name) + wl_string(interface)
+                                  + struct.pack("<II", min(version, 1), METHOD_ID))
+                elif obj == METHOD_ID and opcode == 0:
+                    (context,) = struct.unpack_from("<I", payload)
+                    method.activate(context)
+                    pending = None
+                elif obj == METHOD_ID and opcode == 1:
+                    (context,) = struct.unpack_from("<I", payload)
+                    if method.deactivate(context):
+                        pending = time.monotonic() + SETTLE
+                else:
+                    method.event(obj, opcode, payload)
+        if typing.fd >= 0 and typing.fd in ready:
+            try:
+                for request in typing.requests():
+                    method.handle(request)
+            except (BrokenPipeError, ConnectionError):
+                report.write(False)
+                return 0
         if pending is not None and time.monotonic() >= pending:
             pending = None
-            if current is None:
+            if method.current is None:
                 report.write(False)
 
 

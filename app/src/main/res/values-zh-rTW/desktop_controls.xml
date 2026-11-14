@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="desktop_ime_paste_notice">這個視窗不接受輸入法文字，英數以外的字元會改用 Ctrl+V 貼上。</string>
+    <string name="desktop_ime_dropped">桌面上沒有可以接收這段文字的地方</string>
+    <string name="desktop_key_copy">複製</string>
+    <string name="desktop_key_paste">貼上</string>
+    <string name="desktop_key_terminal_paste">終端機貼上</string>
+    <string name="desktop_key_cut">剪下</string>
+    <string name="desktop_key_select_all">全選</string>
+    <string name="desktop_key_undo">復原</string>
+    <string name="desktop_toolbar_keyboard">Android 鍵盤</string>
+    <string name="desktop_toolbar_keys">按鍵列</string>
+    <string name="desktop_toolbar_pc_keyboard">PC</string>
+    <string name="desktop_toolbar_touchpad">觸控板模式，點一下改為直接觸控</string>
+    <string name="desktop_toolbar_direct">直接觸控，點一下改為觸控板模式</string>
+    <string name="desktop_toolbar_right_click">右鍵</string>
+    <string name="desktop_toolbar_scale">桌面縮放</string>
+    <string name="desktop_toolbar_display">顯示</string>
+    <string name="desktop_toolbar_settings">觸控與鍵盤設定</string>
+    <string name="desktop_toolbar_menu">DroidDeck 選單</string>
+    <string name="desktop_toolbar_collapse">收合工具列</string>
+    <string name="desktop_toolbar_expand">展開工具列</string>
+    <string name="desktop_scale_title">KDE 介面縮放</string>
+    <string name="desktop_scale_hint">等同「系統設定 › 顯示」的縮放：文字、面板和視窗按鈕會變大，觸控位置保持正確。虛擬解析度是另一項設定，在「顯示」頁。</string>
+    <string name="desktop_scale_applying">套用中…</string>
+    <string name="desktop_scale_failed">無法變更 KDE 縮放：%1$s</string>
+    <string name="desktop_setting_long_press_right_click">長按為右鍵（觸控板模式）</string>
+    <string name="desktop_setting_pointer_speed">游標速度</string>
+    <string name="desktop_setting_scroll_speed">雙指捲動速度</string>
+    <string name="desktop_setting_extra_keys">在 Android 鍵盤上方顯示 PC 按鍵列</string>
+    <string name="desktop_setting_suggestions">鍵盤建議與自動校正</string>
+    <string name="desktop_setting_paste_fallback">不支援輸入法的程式，中文等文字改用貼上</string>
+</resources>

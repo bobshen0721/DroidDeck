@@ -586,6 +586,17 @@ jobs:
           python3 tools/powervr/fetch.py
           bash tools/packs/build.sh app/build/packs
 
+      # Fork test builds cannot publish add-on packs, and the proot and ubisoft packs a build makes are not
+      # byte-identical to published ones, so their release URLs 404. AddonPack installs a bundled pack first.
+      - name: Bundle the unpublished packs in fork test builds
+        if: github.repository != 'Droid-Deck/DroidDeck'
+        run: |
+          set -euo pipefail
+          mkdir -p app/src/main/assets/packs
+          for pack in proot ubisoft; do
+            cp "app/build/packs/$pack.tar.zst" "app/src/main/assets/packs/$pack.tar.zst"
+          done
+
       - name: Pin the Syncthing source
         id: syncthing-src
         run: |

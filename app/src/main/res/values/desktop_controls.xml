@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="desktop_ime_paste_notice">This window does not take keyboard text directly, so characters other than plain English are pasted with Ctrl+V.</string>
+    <string name="desktop_ime_dropped">Nothing on the desktop can take that text</string>
+    <string name="desktop_key_copy">Copy</string>
+    <string name="desktop_key_paste">Paste</string>
+    <string name="desktop_key_terminal_paste">Terminal paste</string>
+    <string name="desktop_key_cut">Cut</string>
+    <string name="desktop_key_select_all">Select all</string>
+    <string name="desktop_key_undo">Undo</string>
+    <string name="desktop_toolbar_keyboard">Android keyboard</string>
+    <string name="desktop_toolbar_keys">Keys</string>
+    <string name="desktop_toolbar_pc_keyboard">PC</string>
+    <string name="desktop_toolbar_touchpad">Touchpad mode. Tap for direct touch</string>
+    <string name="desktop_toolbar_direct">Direct touch. Tap for touchpad mode</string>
+    <string name="desktop_toolbar_right_click">Right-click</string>
+    <string name="desktop_toolbar_scale">Desktop scale</string>
+    <string name="desktop_toolbar_display">Display</string>
+    <string name="desktop_toolbar_settings">Touch and keyboard settings</string>
+    <string name="desktop_toolbar_menu">DroidDeck menu</string>
+    <string name="desktop_toolbar_collapse">Collapse toolbar</string>
+    <string name="desktop_toolbar_expand">Expand toolbar</string>
+    <string name="desktop_scale_title">KDE interface scale</string>
+    <string name="desktop_scale_hint">The same setting as System Settings › Display: text, panels and window buttons get bigger and touch stays aligned. The virtual resolution is separate, under Display.</string>
+    <string name="desktop_scale_applying">Applying…</string>
+    <string name="desktop_scale_failed">Could not change the KDE scale: %1$s</string>
+    <string name="desktop_setting_long_press_right_click">Long press right-clicks (touchpad mode)</string>
+    <string name="desktop_setting_pointer_speed">Pointer speed</string>
+    <string name="desktop_setting_scroll_speed">Two-finger scroll speed</string>
+    <string name="desktop_setting_extra_keys">PC keys above the Android keyboard</string>
+    <string name="desktop_setting_suggestions">Keyboard suggestions and autocorrect</string>
+    <string name="desktop_setting_paste_fallback">Paste Chinese and other text into programs without input-method support</string>
+</resources>
