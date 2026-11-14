@@ -35,7 +35,7 @@ class KeyboardHostTest {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         imm = activity.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         host = KeyboardHost(activity) { event ->
-            keys += "${if (event.action == KeyEvent.ACTION_DOWN) "down" else "up"} ${KeyEvent.keyCodeToString(event.keyCode)}"
+            keys += "${if (event.action == KeyEvent.ACTION_DOWN) "down" else "up"} ${event.keyCode}"
             true
         }
         host.sendEvdev = { code, down -> evdev += "${if (down) "down" else "up"} $code" }
@@ -91,7 +91,7 @@ class KeyboardHostTest {
     @Test fun asciiIsTypedAsKeysAndLineBreaksPressEnter() {
         val (ic, _) = connection()
         ic.commitText("a\n", 1)
-        assertEquals(listOf("down KEYCODE_A", "up KEYCODE_A", "down KEYCODE_ENTER", "up KEYCODE_ENTER"), keys)
+        assertEquals(pressed(KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_ENTER), keys)
         assertTrue(committed.isEmpty())
     }
 
@@ -120,7 +120,7 @@ class KeyboardHostTest {
         ic.commitText("c", 1)
         ic.commitText("d", 1)
         assertEquals(listOf("down 29", "up 29"), evdev)
-        assertEquals(listOf("down KEYCODE_C", "up KEYCODE_C", "down KEYCODE_D", "up KEYCODE_D"), keys)
+        assertEquals(pressed(KeyEvent.KEYCODE_C, KeyEvent.KEYCODE_D), keys)
         assertTrue(host.modifiers.isEmpty())
     }
 
@@ -171,6 +171,8 @@ class KeyboardHostTest {
         assertFalse(shadowOf(imm).isSoftInputVisible)
         assertFalse(host.shown)
     }
+
+    private fun pressed(vararg codes: Int) = codes.flatMap { listOf("down $it", "up $it") }
 
     private fun idle() = shadowOf(Looper.getMainLooper()).idle()
 }

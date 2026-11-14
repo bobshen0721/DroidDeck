@@ -90,7 +90,7 @@ class DesktopToolbar(context: Context, private val listener: Listener) : LinearL
         setPadding(dp(8), 0, dp(8), 0)
         background = chip(false)
         layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, dp(DesktopExtraKeys.MIN_TARGET_DP)).apply {
-            setMargins(dp(2), 0, dp(2), 0)
+            setMargins(dp(2), dp(2), dp(2), dp(2))
         }
         setOnClickListener {
             performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
@@ -164,6 +164,14 @@ class DesktopToolbar(context: Context, private val listener: Listener) : LinearL
 
     /** Places the bar from the stored fractions of the free area, so it survives rotation. */
     fun place() {
+        val host = parent as? ViewGroup ?: return
+        val wanted = if (host.height > host.width) VERTICAL else HORIZONTAL
+        if (host.width > 0 && orientation != wanted) {
+            orientation = wanted
+            requestLayout()
+            post { place() }
+            return
+        }
         val area = bounds() ?: return
         val fx = prefs.getFloat(KEY_X, DEFAULT_X)
         val fy = prefs.getFloat(KEY_Y, DEFAULT_Y)
@@ -236,8 +244,9 @@ class DesktopToolbar(context: Context, private val listener: Listener) : LinearL
         private const val KEY_Y = "y"
         private const val KEY_EXPANDED = "expanded"
         private const val EDGE_DP = 8
-        private const val DEFAULT_X = 0f
-        private const val DEFAULT_Y = 1f
+        // Middle of the right edge: clear of Plasma's bottom panel and of maximized windows' title buttons.
+        private const val DEFAULT_X = 1f
+        private const val DEFAULT_Y = 0.45f
     }
 }
 
