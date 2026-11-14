@@ -2,6 +2,7 @@ package com.droiddeck.launcher
 
 import com.droiddeck.launcher.input.SecondScreenMode
 import com.droiddeck.launcher.session.SessionDisplay
+import com.droiddeck.launcher.session.SessionPrefs
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -27,6 +28,20 @@ class DesktopQuickControlsTest {
         assertEquals(1.9f, DesktopQuickControls.normalizeScale(1.9f), 0.0001f)
         assertEquals(2.5f, DesktopQuickControls.normalizeScale(2.5f), 0.0001f)
         assertEquals(8f, DesktopQuickControls.normalizeScale(99f), 0.0001f)
+    }
+
+    @Test fun pcKeyRowNeedsTheAndroidKeyboardInset() {
+        assertTrue(DesktopQuickControls.showExtraKeys(true, true, false, true))
+        assertFalse(DesktopQuickControls.showExtraKeys(true, true, false, false))
+        assertFalse(DesktopQuickControls.showExtraKeys(true, true, true, true))
+        assertFalse(DesktopQuickControls.showExtraKeys(false, true, false, true))
+    }
+
+    @Test fun automaticTouchIsATrackpadOnTheDesktopOnly() {
+        assertTrue(DesktopQuickControls.usesTouchpad(SessionPrefs.TOUCH_AUTO, false, false))
+        assertFalse(DesktopQuickControls.usesTouchpad(SessionPrefs.TOUCH_AUTO, true, false))
+        assertFalse(DesktopQuickControls.usesTouchpad(SessionPrefs.TOUCH_DIRECT, false, false))
+        assertTrue(DesktopQuickControls.usesTouchpad(SessionPrefs.TOUCH_PAD, true, false))
     }
 
     @Test fun externalModesHideUnavailablePanel() {

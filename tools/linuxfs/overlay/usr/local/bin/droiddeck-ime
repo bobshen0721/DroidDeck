@@ -4,13 +4,23 @@ import os
 import select
 import socket
 import struct
+import subprocess
 import sys
+import threading
 import time
 
 DISPLAY_ID = 1
 REGISTRY_ID = 2
 METHOD_ID = 3
 SETTLE = 0.15
+COMMIT_STRING = 1
+PREEDIT_STRING = 2
+PREEDIT_CURSOR = 4
+COMMIT_STATE = 4
+# libwayland caps a request at 4096 bytes including the header and string length.
+TEXT_CHUNK = 3000
+INPUT_FIFO = "ime-input"
+SCALES = (1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 3.0)
 
 
 def wl_string(value):
@@ -37,6 +47,9 @@ class Connection:
         ready, _, _ = select.select([self.sock], [], [], timeout)
         if not ready:
             return []
+        return self.read()
+
+    def read(self):
         data, _, _, _ = self.sock.recvmsg(65536, socket.CMSG_SPACE(16 * 4))
         if not data:
             raise EOFError
@@ -74,6 +87,134 @@ class Report:
         print(f"droiddeck-ime: text field {'focused' if field else 'left'}", file=sys.stderr, flush=True)
 
 
+def text_chunks(text, limit=TEXT_CHUNK):
+    """Splits text into pieces whose UTF-8 encoding fits one request, never inside a character."""
+    chunk, size = [], 0
+    for ch in text:
+        width = len(ch.encode("utf-8", "surrogatepass"))
+        if chunk and size + width > limit:
+            yield "".join(chunk)
+            chunk, size = [], 0
+        chunk.append(ch)
+        size += width
+    if chunk:
+        yield "".join(chunk)
+
+
+def utf8_offset(text, chars):
+    return len(text[:max(0, chars)].encode("utf-8", "surrogatepass"))
+
+
+class HostInput:
+    """Text the Android keyboard sends through a FIFO in the session's agent directory, one JSON object per line."""
+
+    def __init__(self, directory):
+        self.fd = None
+        self.buffer = b""
+        if not directory:
+            return
+        path = os.path.join(directory, INPUT_FIFO)
+        try:
+            os.makedirs(directory, exist_ok=True)
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
+            os.mkfifo(path, 0o600)
+            # Read-write so the FIFO never reports end-of-file between writers.
+            self.fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
+        except OSError as error:
+            print(f"droiddeck-ime: no Android text channel: {error}", file=sys.stderr, flush=True)
+            self.fd = None
+
+    def commands(self):
+        try:
+            data = os.read(self.fd, 65536)
+        except BlockingIOError:
+            return []
+        self.buffer += data
+        out = []
+        while b"\n" in self.buffer:
+            line, self.buffer = self.buffer.split(b"\n", 1)
+            if not line.strip():
+                continue
+            try:
+                command = json.loads(line.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                print("droiddeck-ime: ignored a malformed text command", file=sys.stderr, flush=True)
+                continue
+            if isinstance(command, dict):
+                out.append(command)
+        if len(self.buffer) > 1 << 20:
+            self.buffer = b""
+        return out
+
+
+def kscreen_env():
+    env = dict(os.environ)
+    env.pop("WAYLAND_SOCKET", None)
+    if os.environ.get("BL_DESKTOP") == "1":
+        env["WAYLAND_DISPLAY"] = os.environ.get("DROIDDECK_KWIN_SOCKET", "wayland-1")
+    return env
+
+
+def apply_scale(value, run=subprocess.run):
+    """Sets Plasma's own output scale, which enlarges text and controls without changing the output's pixel size."""
+    env = kscreen_env()
+    try:
+        listing = run(["kscreen-doctor", "-j"], capture_output=True, timeout=15, env=env, check=False)
+        outputs = json.loads(listing.stdout or b"{}").get("outputs", [])
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        print(f"droiddeck-ime: cannot list outputs for scaling: {error}", file=sys.stderr, flush=True)
+        return False
+    names = [o.get("name") for o in outputs if o.get("name") and o.get("enabled", True)]
+    if not names:
+        print("droiddeck-ime: no enabled output to scale", file=sys.stderr, flush=True)
+        return False
+    args = ["kscreen-doctor"] + [f"output.{name}.scale.{value:g}" for name in names]
+    try:
+        result = run(args, capture_output=True, timeout=15, env=env, check=False)
+    except (OSError, subprocess.SubprocessError) as error:
+        print(f"droiddeck-ime: scaling failed: {error}", file=sys.stderr, flush=True)
+        return False
+    print(f"droiddeck-ime: desktop scale {value:g} on {', '.join(names)} -> {result.returncode}", file=sys.stderr, flush=True)
+    return result.returncode == 0
+
+
+class Scaler:
+    """Applies only the newest requested scale, off the Wayland thread."""
+
+    def __init__(self, apply=apply_scale):
+        self.apply = apply
+        self.lock = threading.Lock()
+        self.wanted = None
+        self.wake = threading.Event()
+        threading.Thread(target=self.loop, daemon=True).start()
+
+    def request(self, value):
+        with self.lock:
+            self.wanted = value
+        self.wake.set()
+
+    def loop(self):
+        while True:
+            self.wake.wait()
+            time.sleep(0.3)
+            with self.lock:
+                value, self.wanted = self.wanted, None
+                self.wake.clear()
+            if value is not None:
+                self.apply(value)
+
+
+def parse_scale(value):
+    try:
+        scale = float(value)
+    except (TypeError, ValueError):
+        return None
+    return scale if scale in SCALES else None
+
+
 def connect():
     fd = os.environ.pop("WAYLAND_SOCKET", "")
     if fd.isdigit():
@@ -83,9 +224,41 @@ def connect():
     return sock
 
 
+def handle_host(conn, command, contexts, current, scaler):
+    op = command.get("op")
+    if op == "scale":
+        value = parse_scale(command.get("value"))
+        if value is None:
+            print(f"droiddeck-ime: unsupported scale {command.get('value')!r}", file=sys.stderr, flush=True)
+        else:
+            scaler.request(value)
+        return
+    text = command.get("text")
+    if not isinstance(text, str):
+        return
+    if current is None or current not in contexts:
+        if op == "commit" and text:
+            print(f"droiddeck-ime: {len(text)} typed chars dropped: no focused text field", file=sys.stderr, flush=True)
+        return
+    serial = contexts[current]["serial"]
+    if op == "commit":
+        for chunk in text_chunks(text):
+            conn.send(current, COMMIT_STRING, struct.pack("<I", serial) + wl_string(chunk))
+    elif op == "preedit":
+        if len(text.encode("utf-8", "surrogatepass")) > TEXT_CHUNK:
+            return
+        cursor = command.get("cursor", len(text))
+        cursor = cursor if isinstance(cursor, int) else len(text)
+        conn.send(current, PREEDIT_CURSOR, struct.pack("<i", utf8_offset(text, cursor)))
+        conn.send(current, PREEDIT_STRING, struct.pack("<I", serial) + wl_string(text) + wl_string(""))
+
+
 def main():
     launch = os.environ.get("BL_LAUNCH_DIR", "")
-    report = Report(os.environ.get("BL_IME_DIR") or (os.path.join(launch, "agent") if launch else ""))
+    directory = os.environ.get("BL_IME_DIR") or (os.path.join(launch, "agent") if launch else "")
+    report = Report(directory)
+    host = HostInput(directory)
+    scaler = Scaler()
     conn = Connection(connect())
     conn.send(DISPLAY_ID, 1, struct.pack("<I", REGISTRY_ID))
     contexts = {}
@@ -93,11 +266,15 @@ def main():
     pending = None
     while True:
         timeout = None if pending is None else max(0.0, pending - time.monotonic())
-        try:
-            batch = conn.messages(timeout)
-        except (EOFError, ConnectionError):
-            report.write(False)
-            return 0
+        readers = [conn.sock] + ([host.fd] if host.fd is not None else [])
+        ready, _, _ = select.select(readers, [], [], timeout)
+        batch = []
+        if conn.sock in ready:
+            try:
+                batch = conn.read()
+            except (EOFError, ConnectionError):
+                report.write(False)
+                return 0
         for obj, opcode, payload in batch:
             if obj == DISPLAY_ID and opcode == 0:
                 _, code = struct.unpack_from("<II", payload)
@@ -114,7 +291,7 @@ def main():
                               + struct.pack("<II", min(version, 1), METHOD_ID))
             elif obj == METHOD_ID and opcode == 0:
                 (context,) = struct.unpack_from("<I", payload)
-                contexts[context] = [0, 0]
+                contexts[context] = {"hint": 0, "purpose": 0, "serial": 0}
                 current = context
                 pending = None
                 report.write(True)
@@ -127,9 +304,14 @@ def main():
                     pending = time.monotonic() + SETTLE
             elif obj in contexts and opcode == 2:
                 hint, purpose = struct.unpack_from("<II", payload)
-                contexts[obj] = [hint, purpose]
+                contexts[obj].update(hint=hint, purpose=purpose)
                 if obj == current:
                     report.write(True, hint, purpose)
+            elif obj in contexts and opcode == COMMIT_STATE:
+                (contexts[obj]["serial"],) = struct.unpack_from("<I", payload)
+        if host.fd is not None and host.fd in ready:
+            for command in host.commands():
+                handle_host(conn, command, contexts, current, scaler)
         if pending is not None and time.monotonic() >= pending:
             pending = None
             if current is None:

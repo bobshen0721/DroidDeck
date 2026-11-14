@@ -1,6 +1,7 @@
 package com.droiddeck.launcher
 
 import com.droiddeck.launcher.input.SecondScreenMode
+import com.droiddeck.launcher.input.TouchRouter
 import com.droiddeck.launcher.session.SessionDisplay
 
 /** Compatibility policy for desktop input controls; unrelated to the Chromium sandbox. */
@@ -27,4 +28,11 @@ internal object DesktopQuickControls {
         overlayOpen: Boolean,
         androidKeyboardVisible: Boolean,
     ): Boolean = isDesktop && isPhone && sessionReady && !overlayOpen && !androidKeyboardVisible
+
+    /** The PC-key row sits on the Android keyboard, so it needs the keyboard's inset to be placed. */
+    fun showExtraKeys(isDesktop: Boolean, sessionReady: Boolean, overlayOpen: Boolean, imeInsetsKnown: Boolean): Boolean =
+        isDesktop && sessionReady && !overlayOpen && imeInsetsKnown
+
+    fun usesTouchpad(mode: String, steamSession: Boolean, steamDesktopUi: Boolean): Boolean =
+        TouchRouter.decide(TouchRouter.Snapshot(false, mode, false, steamSession, steamDesktopUi)) == TouchRouter.Route.TOUCHPAD
 }

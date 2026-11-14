@@ -98,6 +98,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.droiddeck.launcher.DesktopQuickControls
+import com.droiddeck.launcher.input.DesktopTouchPrefs
 import com.droiddeck.launcher.HomeApp
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -261,6 +262,14 @@ class DrawerActions(
     val desktopAvailable: Boolean = false,
     val desktopScale: Float = 1f,
     val onDesktopScale: (Float) -> Unit = {},
+    val kdeScale: Float = 1f,
+    val onKdeScale: (Float) -> Unit = {},
+    val touchpadSpeed: Float = 1f,
+    val onTouchpadSpeed: (Float) -> Unit = {},
+    val touchpadScroll: Float = 1f,
+    val onTouchpadScroll: (Float) -> Unit = {},
+    val touchpadLongPress: String = DesktopTouchPrefs.LONG_PRESS_RIGHT_CLICK,
+    val onTouchpadLongPress: (String) -> Unit = {},
     val secondScreenDisplays: List<SecondScreenDisplay>,
     val selectedSecondScreenDisplay: Int,
     val onHud: (Boolean) -> Unit,
@@ -1074,6 +1083,10 @@ private fun DesktopPhoneQuickActions(host: MenuHost, a: DrawerActions, track: (S
                 a.onHardwareKeyboard()
             }
         }
+        ChoiceRow(host, "mobile-kde-scale", stringResource(R.string.mobile_kde_scale),
+            stringResource(R.string.mobile_kde_scale_hint),
+            DesktopTouchPrefs.KDE_SCALES.map { it to stringResource(R.string.mobile_desktop_scale_factor, kotlin.math.round(it * 100f).toInt()) },
+            a.kdeScale, chipModifier = track("mobile-kde-scale"), onPick = a.onKdeScale)
         ChoiceRow(host, "mobile-desktop-scale", stringResource(R.string.mobile_desktop_scale),
             stringResource(R.string.mobile_desktop_scale_hint),
             DesktopQuickControls.SCALES.map { it to stringResource(R.string.mobile_desktop_scale_factor, (it * 100).toInt()) } +
@@ -1088,6 +1101,17 @@ private fun DesktopPhoneQuickActions(host: MenuHost, a: DrawerActions, track: (S
                 SessionPrefs.TOUCH_GESTURES to stringResource(R.string.mode_touch_gestures),
                 SessionPrefs.TOUCH_AUTO to stringResource(R.string.common_auto),
             ), a.touchMode, chipModifier = track("mobile-touch-mode"), onPick = a.onTouch)
+        ChoiceRow(host, "mobile-touchpad-speed", stringResource(R.string.mobile_touchpad_speed), null,
+            DesktopTouchPrefs.POINTER_SPEEDS.map { it to stringResource(R.string.mobile_speed_factor, speedLabel(it)) },
+            a.touchpadSpeed, chipModifier = track("mobile-touchpad-speed"), onPick = a.onTouchpadSpeed)
+        ChoiceRow(host, "mobile-touchpad-scroll", stringResource(R.string.mobile_touchpad_scroll), null,
+            DesktopTouchPrefs.SCROLL_SPEEDS.map { it to stringResource(R.string.mobile_speed_factor, speedLabel(it)) },
+            a.touchpadScroll, chipModifier = track("mobile-touchpad-scroll"), onPick = a.onTouchpadScroll)
+        ChoiceRow(host, "mobile-touchpad-long-press", stringResource(R.string.mobile_touchpad_long_press), null,
+            listOf(
+                DesktopTouchPrefs.LONG_PRESS_RIGHT_CLICK to stringResource(R.string.mobile_touchpad_long_press_right),
+                DesktopTouchPrefs.LONG_PRESS_DRAG to stringResource(R.string.mobile_touchpad_long_press_drag),
+            ), a.touchpadLongPress, chipModifier = track("mobile-touchpad-long-press"), onPick = a.onTouchpadLongPress)
         ActionRow(stringResource(R.string.gesture_settings), stringResource(R.string.mobile_gesture_hint),
             stringResource(R.string.ctrl_edit), a.onGestureSettings, modifier = track("mobile-gesture-settings"))
         if (a.secondScreenDisplays.isNotEmpty()) {
@@ -1106,6 +1130,9 @@ private fun DesktopPhoneQuickActions(host: MenuHost, a: DrawerActions, track: (S
             fontSize = 12.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
     }
 }
+
+private fun speedLabel(value: Float): String =
+    if (value == kotlin.math.floor(value)) value.toInt().toString() else value.toString()
 
 private const val LOOK_CUSTOM = "custom"
 

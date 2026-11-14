@@ -262,6 +262,42 @@ class TouchpadGesturesTest {
         assertFalse(events.contains("left down"))
     }
 
+    @Test fun longPressDragsByDefault() {
+        touch(MotionEvent.ACTION_DOWN, 0, 1 to (400f to 300f))
+        advance(TouchTiming.HOLD_MS + 20)
+        assertEquals(listOf("long press", "left down"), events)
+        touch(MotionEvent.ACTION_UP, 0, 1 to (400f to 300f))
+        assertEquals(listOf("long press", "left down", "left up"), events)
+    }
+
+    @Test fun longPressCanRightClickWithoutHoldingTheLeftButton() {
+        touchpad.longPressRightClick = true
+        touch(MotionEvent.ACTION_DOWN, 0, 1 to (400f to 300f))
+        advance(TouchTiming.HOLD_MS + 20)
+        touch(MotionEvent.ACTION_UP, 0, 1 to (400f to 300f))
+        advance(100)
+        assertEquals(listOf("long press", "right down", "right up"), events)
+    }
+
+    @Test fun cancelledLongPressRightClickLeavesNoButtonHeld() {
+        touchpad.longPressRightClick = true
+        touch(MotionEvent.ACTION_DOWN, 0, 1 to (400f to 300f))
+        advance(TouchTiming.HOLD_MS + 5)
+        touch(MotionEvent.ACTION_CANCEL, 0, 1 to (400f to 300f))
+        advance(100)
+        assertEquals(listOf("long press", "right down", "right up"), events)
+    }
+
+    @Test fun scrollScaleSpeedsUpWheelSteps() {
+        touchpad.scrollScale = 2f
+        touch(MotionEvent.ACTION_DOWN, 0, 1 to (400f to 300f))
+        advance(10)
+        touch(MotionEvent.ACTION_POINTER_DOWN, 1, 1 to (400f to 300f), 2 to (600f to 300f))
+        advance(10)
+        touch(MotionEvent.ACTION_MOVE, 0, 1 to (400f to 336f), 2 to (600f to 336f))
+        assertTrue(events.contains("wheel -2"))
+    }
+
     private fun tap() {
         touch(MotionEvent.ACTION_DOWN, 0, 1 to (400f to 300f))
         advance(80)
